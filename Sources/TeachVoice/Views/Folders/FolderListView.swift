@@ -1,6 +1,16 @@
 import SwiftUI
 
+/// Ob die aktuell angezeigten Ordner aus Supabase (Cloud, E-Mail-Login) oder
+/// rein lokal (Gastzugang) kommen – rein informativ für Banner/Abmelden-Label,
+/// die eigentliche Datenquelle steuert `LibraryStore.useRepository`.
+enum LibraryMode {
+    case cloud
+    case guest
+}
+
 struct FolderListView: View {
+    let mode: LibraryMode
+
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: LibraryStore
 
@@ -10,6 +20,14 @@ struct FolderListView: View {
     var body: some View {
         NavigationStack {
             List {
+                if mode == .guest {
+                    Section {
+                        Label("Gastmodus – Karten sind nur auf diesem Gerät gespeichert.", systemImage: "iphone")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 ForEach(library.folders) { folder in
                     NavigationLink(value: folder) {
                         Label(folder.name, systemImage: "folder.fill")
@@ -35,8 +53,8 @@ struct FolderListView: View {
                     }
                 }
                 ToolbarItem(placement: .topBarLeading) {
-                    Button("Abmelden", role: .destructive) {
-                        auth.signOut()
+                    Button(mode == .guest ? "Gastmodus verlassen" : "Abmelden", role: .destructive) {
+                        auth.leaveCurrentSession()
                     }
                 }
             }

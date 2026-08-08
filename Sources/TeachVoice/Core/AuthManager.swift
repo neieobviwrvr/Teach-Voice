@@ -33,6 +33,7 @@ private struct SupabaseUser: Decodable {
 @MainActor
 final class AuthManager: ObservableObject {
     @Published private(set) var session: AuthSession?
+    @Published private(set) var isGuest: Bool
     @Published var isLoading = false
     @Published var errorMessage: String?
 
@@ -46,13 +47,42 @@ final class AuthManager: ObservableObject {
         static let refreshToken = "refresh_token"
     }
 
+    private enum DefaultsKey {
+        static let isGuest = "teachvoice.isGuest"
+    }
+
     init() {
+        isGuest = UserDefaults.standard.bool(forKey: DefaultsKey.isGuest)
         if let refreshToken = Keychain.get(KeychainKey.refreshToken) {
             Task { await refresh(refreshToken: refreshToken) }
         }
     }
 
     var isAuthenticated: Bool { session != nil }
+
+    /// Startet die App im Gastmodus: keine Registrierung, keine Cloud-Anbindung –
+    /// Karteikarten werden ausschließlich lokal auf diesem Gerät gespeichert.
+    func continueAsGuest() {
+        isGuest = true
+        UserDefaults.standard.set(true, forKey: DefaultsKey.isGuest)
+    }
+
+    /// Verlässt den Gastmodus wieder (z.B. um sich stattdessen per E-Mail anzumelden).
+    /// Bereits lokal gespeicherte Gastdaten bleiben auf dem Gerät erhalten, bis der
+    /// Gastmodus erneut aktiviert wird.
+    func exitGuestMode() {
+        isGuest = false
+        UserDefaults.standard.set(false, forKey: DefaultsKey.isGuest)
+    }
+
+    /// Beendet die aktuelle Sitzung, egal ob Cloud-Login oder Gastmodus.
+    func leaveCurrentSession() {
+        if isGuest {
+            exitGuestMode()
+        } else {
+            signOut()
+        }
+    }
 
     func signUp(email: String, password: String) async {
         await performAuthRequest(path: "signup", body: ["email": email, "password": password]) { [weak self] result in

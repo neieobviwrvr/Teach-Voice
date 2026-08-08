@@ -8,7 +8,19 @@ iOS-App (SwiftUI) für sprachbasiertes Karteikarten-Lernen an der Uni:
 ## Struktur
 
 - Ordner (Ober-Ordner) → Unterordner (umbenennbar) → Karteikarten (Frage + Antwort), max. 20 Karten pro Unterordner.
-- Auth: E-Mail + Passwort über Supabase Auth.
+- Auth: **E-Mail + Passwort** (Supabase) **oder Gastzugang** (rein lokal, kein Konto, kein Server-Roundtrip).
+  Sign in with Apple/Google folgt später (siehe Task #9) – aktuell bewusst nicht eingebaut.
+
+### Gastzugang vs. Cloud-Login
+
+`LibraryStore` kennt nur das `LibraryRepository`-Protokoll, nicht die konkrete Datenquelle:
+
+| Modus | Repository | Speicherort |
+|---|---|---|
+| E-Mail-Login | `RemoteLibraryRepository` | Supabase (Postgres, RLS-geschützt, geräteübergreifend) |
+| Gastzugang | `LocalLibraryRepository` | JSON-Datei im App-Sandbox-Verzeichnis, verlässt das Gerät nie |
+
+`RootView` schaltet das Repository je nach `AuthManager`-Zustand (`isAuthenticated` / `isGuest`) um.
 
 ## Supabase
 

@@ -8,7 +8,10 @@ struct TeachVoiceApp: App {
     init() {
         let auth = AuthManager()
         _auth = StateObject(wrappedValue: auth)
-        _library = StateObject(wrappedValue: LibraryStore(auth: auth))
+        // Platzhalter-Repository beim Start – `RootView` stellt sofort auf
+        // Remote (Cloud-Login) oder Local (Gastmodus) um, sobald der
+        // tatsächliche Auth-Zustand feststeht.
+        _library = StateObject(wrappedValue: LibraryStore(repository: LocalLibraryRepository()))
     }
 
     var body: some Scene {

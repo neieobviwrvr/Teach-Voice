@@ -68,6 +68,30 @@ struct AuthView: View {
                 }
                 .font(.footnote)
 
+                HStack {
+                    VStack { Divider() }
+                    Text("oder").font(.caption).foregroundStyle(.secondary)
+                    VStack { Divider() }
+                }
+                .padding(.horizontal)
+
+                VStack(spacing: 6) {
+                    Button {
+                        auth.continueAsGuest()
+                    } label: {
+                        Label("Als Gast fortfahren", systemImage: "person.fill.questionmark")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.bordered)
+                    .padding(.horizontal)
+
+                    Text("Deine Karteikarten werden dann nur lokal auf diesem Gerät gespeichert – ohne Cloud-Backup, ohne Konto.")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
+
                 Spacer()
                 Spacer()
             }
