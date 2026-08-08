@@ -1,0 +1,46 @@
+# Xcode / Swift
+.DS_Store
+build/
+DerivedData/
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+!default.pbxuser
+!default.mode1v3
+!default.mode2v3
+!default.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+*.xcuserstate
+*.xcscmblueprint
+.swiftpm/
+.build/
+Packages/
+Package.resolved
+
+# CocoaPods (falls genutzt)
+Pods/
+
+# Whisper / CoreML Modelle (werden bei Bedarf lokal heruntergeladen, nicht ins Repo)
+*.mlmodelc
+*.mlpackage
+WhisperModels/
+
+# Secrets
+.env
+.env.local
+*.p12
+*.mobileprovision
+*.pem
+Secrets.swift
+Secrets.xcconfig
+
+# Build output
+*.ipa
+*.xcarchive
+build_output/
+
+# Supabase CLI
+.supabase/
