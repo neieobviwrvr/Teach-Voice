@@ -22,4 +22,7 @@ protocol LibraryRepository: AnyObject {
     func insertFlashcard(question: String, answer: String, subfolderId: UUID) async throws -> Flashcard
     func updateFlashcard(id: UUID, question: String, answer: String) async throws -> Flashcard
     func deleteFlashcard(id: UUID) async throws
+
+    /// Schreibt den Kernelemente-Cache für die STT-Bewertung fort (Lazy Caching).
+    func updateFlashcardGradingCache(id: UUID, kernelemente: [String], sourceHash: String) async throws -> Flashcard
 }

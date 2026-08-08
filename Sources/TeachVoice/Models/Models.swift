@@ -44,12 +44,21 @@ struct Flashcard: Codable, Identifiable, Hashable {
     let createdAt: Date
     var updatedAt: Date
 
+    /// Lazy-Cache für die STT-Bewertung: in Kernelemente zerlegte Musterantwort
+    /// + SHA-256 der Musterantwort, für die diese Kernelemente zuletzt extrahiert
+    /// wurden. `nil`, solange die Karte noch nie im Lernmodus bewertet wurde.
+    /// Explizite `= nil`-Defaults, damit der memberwise Initializer (genutzt in
+    /// `LocalLibraryRepository.insertFlashcard`) diese Felder optional lässt.
+    var kernelemente: [String]? = nil
+    var kernelementeSourceHash: String? = nil
+
     enum CodingKeys: String, CodingKey {
-        case id, question, answer, position
+        case id, question, answer, position, kernelemente
         case subfolderId = "subfolder_id"
         case userId = "user_id"
         case createdAt = "created_at"
         case updatedAt = "updated_at"
+        case kernelementeSourceHash = "kernelemente_source_hash"
     }
 }
 

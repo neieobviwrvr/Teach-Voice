@@ -152,4 +152,21 @@ final class LibraryStore: ObservableObject {
             errorMessage = error.localizedDescription
         }
     }
+
+    /// Persistiert den Kernelemente-Cache nach einem Grading-Call (idempotent,
+    /// still im Hintergrund – Fehler hier sollen dem User keinen Bewertungs-
+    /// Fehler vortäuschen, deshalb kein `errorMessage`-Update).
+    func cacheKernelemente(_ kernelemente: [String], for flashcard: Flashcard, sourceHash: String) async {
+        do {
+            let updated = try await repository.updateFlashcardGradingCache(
+                id: flashcard.id, kernelemente: kernelemente, sourceHash: sourceHash
+            )
+            if var list = flashcards[flashcard.subfolderId], let idx = list.firstIndex(where: { $0.id == flashcard.id }) {
+                list[idx] = updated
+                flashcards[flashcard.subfolderId] = list
+            }
+        } catch {
+            print("Kernelemente-Cache konnte nicht gespeichert werden: \(error.localizedDescription)")
+        }
+    }
 }

@@ -23,6 +23,14 @@ private struct NewFlashcard: Encodable {
 
 private struct RenamePatch: Encodable { let name: String }
 private struct FlashcardPatch: Encodable { let question: String; let answer: String }
+private struct GradingCachePatch: Encodable {
+    let kernelemente: [String]
+    let kernelementeSourceHash: String
+    enum CodingKeys: String, CodingKey {
+        case kernelemente
+        case kernelementeSourceHash = "kernelemente_source_hash"
+    }
+}
 
 /// Speichert Ordner/Unterordner/Karteikarten in Supabase (Postgres via PostgREST),
 /// RLS-geschützt pro eingeloggtem User. Genutzt für den E-Mail/Passwort-Login.
@@ -136,5 +144,15 @@ final class RemoteLibraryRepository: LibraryRepository {
     func deleteFlashcard(id: UUID) async throws {
         let ctx = try await context()
         try await SupabaseRestClient.delete(table: "flashcards", id: id, accessToken: ctx.token)
+    }
+
+    func updateFlashcardGradingCache(id: UUID, kernelemente: [String], sourceHash: String) async throws -> Flashcard {
+        let ctx = try await context()
+        return try await SupabaseRestClient.update(
+            table: "flashcards",
+            id: id,
+            body: GradingCachePatch(kernelemente: kernelemente, kernelementeSourceHash: sourceHash),
+            accessToken: ctx.token
+        )
     }
 }
