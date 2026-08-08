@@ -1,0 +1,45 @@
+name: TeachVoice
+options:
+  bundleIdPrefix: com.simonweinmann
+  deploymentTarget:
+    iOS: "16.0"
+  createIntermediateGroups: true
+
+packages:
+  WhisperKit:
+    url: https://github.com/argmaxinc/WhisperKit
+    from: 0.9.0
+
+targets:
+  TeachVoice:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources/TeachVoice
+    info:
+      path: Generated/Info.plist
+      properties:
+        CFBundleDisplayName: Teach (Voice)
+        UILaunchScreen: {}
+        UIApplicationSceneManifest:
+          UIApplicationSupportsMultipleScenes: false
+        NSMicrophoneUsageDescription: >-
+          Teach (Voice) benötigt Mikrofonzugriff, um deine gesprochene Antwort
+          auf eine Karteikartenfrage aufzunehmen und lokal zu transkribieren.
+        ITSAppUsesNonExemptEncryption: false
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.simonweinmann.teachvoice
+        PRODUCT_NAME: Teach (Voice)
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1"
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
+        ENABLE_BITCODE: "NO"
+    dependencies:
+      - package: WhisperKit
+        product: WhisperKit

@@ -22,6 +22,35 @@ Es wird kein lokaler Mac verwendet. Die IPA wird über eine GitHub-Actions-Workf
 
 ⚠️ **Builds werden ausschließlich auf explizites Kommando ausgelöst, nie automatisch.**
 
+## Projektstruktur
+
+```
+project.yml                        # XcodeGen-Spezifikation (erzeugt TeachVoice.xcodeproj)
+Sources/TeachVoice/
+  TeachVoiceApp.swift               # App-Einstiegspunkt
+  Core/                             # Config, Keychain, Auth (REST gegen Supabase GoTrue), PostgREST-Client
+  Models/                           # Folder, Subfolder, Flashcard (Codable)
+  Stores/LibraryStore.swift         # CRUD-Logik + lokaler State für die Views
+  Services/                         # SpeechService (TTS), AudioRecorder, WhisperTranscriber (STT)
+  Views/                            # Auth, Folders, Flashcards, StudyView (Lernmodus)
+.github/workflows/build-ipa.yml     # Manueller (workflow_dispatch) macOS-Runner-Build -> unsignierte IPA
+supabase/migrations/0001_init.sql   # DB-Schema, RLS, 20-Karten-Limit
+```
+
+Es gibt bewusst **keine Auth-/Datenbank-SDK-Abhängigkeit** (kein `supabase-swift`) – Auth und CRUD laufen über schlanke,
+selbst geschriebene REST-Aufrufe gegen GoTrue/PostgREST. Das hält die SPM-Abhängigkeiten (und damit die
+Fehlerquellen beim ersten CI-Build) gering. Die einzige externe Abhängigkeit ist [WhisperKit](https://github.com/argmaxinc/WhisperKit) für lokales Whisper-base-STT.
+
+## Lokal öffnen (falls doch mal ein Mac zur Verfügung steht)
+
+```bash
+brew install xcodegen
+xcodegen generate
+open TeachVoice.xcodeproj
+```
+
 ## Status
 
-Projekt-Setup in Arbeit – siehe offene Punkte in der laufenden Konversation.
+Grundgerüst steht: Auth (E-Mail/Passwort), Ordner → Unterordner → Karteikarten (max. 20/Unterordner) mit Supabase-Anbindung,
+TTS-Vorlesen der Frage, STT-Lernmodus mit lokalem Whisper-base. Noch ungetestet, da kein Mac zum Kompilieren verfügbar war –
+der erste echte Build läuft über die GitHub-Actions-Pipeline, ausgelöst auf explizites Kommando.

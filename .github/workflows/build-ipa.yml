@@ -1,0 +1,55 @@
+name: Build Unsigned IPA
+
+# WICHTIG: Läuft NUR bei manuellem Auslösen (workflow_dispatch), niemals bei
+# push/PR. Wird bewusst nicht automatisch getriggert – nur auf explizites
+# Kommando des Projekt-Owners.
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode project
+        run: xcodegen generate
+
+      - name: Resolve Swift Package dependencies
+        run: xcodebuild -resolvePackageDependencies -project TeachVoice.xcodeproj
+
+      - name: Build unsigned archive
+        run: |
+          xcodebuild archive \
+            -project TeachVoice.xcodeproj \
+            -scheme TeachVoice \
+            -sdk iphoneos \
+            -archivePath build/TeachVoice.xcarchive \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGN_ENTITLEMENTS="" \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES
+
+      # Sideloadly signiert die App beim Installieren selbst mit der Apple-ID
+      # des Users neu – ein export via ExportOptions.plist (der ein
+      # Apple-Developer-Zertifikat bräuchte) ist daher nicht nötig. Stattdessen
+      # wird das unsignierte .app-Bundle direkt in eine IPA-Struktur gepackt.
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p build/Payload
+          cp -r build/TeachVoice.xcarchive/Products/Applications/*.app build/Payload/
+          cd build
+          zip -qr TeachVoice-unsigned.ipa Payload
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TeachVoice-unsigned-ipa
+          path: build/TeachVoice-unsigned.ipa
+          retention-days: 30
