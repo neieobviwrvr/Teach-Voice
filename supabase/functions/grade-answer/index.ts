@@ -144,6 +144,14 @@ Uni-Karteikartenfrage. Die Antwort wurde per Spracherkennung (Whisper) transkrib
 behandle Formulierung, Füllwörter und leichte Erkennungsfehler DEUTLICH nachsichtiger
 als bei einer geschriebenen Antwort. Es zählt der Inhalt, nicht der exakte Wortlaut.
 
+Wichtig zu Erkennungsfehlern: Whisper verhört sich manchmal bei einzelnen Fachbegriffen
+und gibt dann ein lautlich ähnliches, aber unsinniges Kunstwort aus (z.B. "Lernenghebung"
+statt "Lernumgebung", oder "Verstärkungsplan" verhört als "Verstärkungsplarm"). Wenn ein
+Wort im Transkript keinen Sinn ergibt, aber phonetisch klar erkennbar einem erwarteten
+Fachbegriff aus den Kernelementen ähnelt, zähle es trotzdem als korrekt getroffen – gehe
+im Zweifel davon aus, dass die/der Studierende das richtige Wort gesagt hat und nur die
+Spracherkennung es falsch verschriftlicht hat.
+
 Frage: ${question}
 
 Kernelemente der Musterantwort (jedes einzeln auf sinngemäßes Vorkommen prüfen):
