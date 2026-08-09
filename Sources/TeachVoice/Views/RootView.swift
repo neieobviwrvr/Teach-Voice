@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: LibraryStore
+    @EnvironmentObject private var transcriber: WhisperTranscriber
 
     var body: some View {
         Group {
@@ -36,5 +37,10 @@ struct RootView: View {
                 library.useRepository(LocalLibraryRepository())
             }
         }
+        // Whisper so früh wie möglich im Hintergrund vorbereiten (App-Start),
+        // statt erst wenn der User im Lernmodus tatsächlich aufnehmen will –
+        // die einmalige CoreML-Modell-Kompilierung soll idealerweise schon
+        // erledigt sein, während man noch durch die Ordner navigiert.
+        .task { await transcriber.prepareIfNeeded() }
     }
 }
