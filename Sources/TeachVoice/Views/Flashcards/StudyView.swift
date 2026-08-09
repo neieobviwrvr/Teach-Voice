@@ -60,7 +60,9 @@ struct StudyView: View {
                         .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                     }
 
-                    if isGrading {
+                    if isTranscribing {
+                        ProgressView("Transkribiere…")
+                    } else if isGrading {
                         ProgressView("Wird bewertet…")
                     } else if let gradingError {
                         Label(gradingError, systemImage: "exclamationmark.triangle")
@@ -76,7 +78,10 @@ struct StudyView: View {
                         nextCard()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(index >= cards.count - 1 && transcribedAnswer == nil)
+                    .disabled(
+                        isTranscribing || isGrading
+                        || (index >= cards.count - 1 && transcribedAnswer == nil)
+                    )
                 } else {
                     ContentUnavailableView("Fertig!", systemImage: "checkmark.seal.fill", description: Text("Du hast alle Karten in diesem Unterordner durchgesprochen."))
                 }
@@ -188,11 +193,17 @@ struct StudyView: View {
             guard let url = recorder.stopRecording() else { return }
             isTranscribing = true
             let text = await transcriber.transcribe(audioURL: url)
-            transcribedAnswer = text
             isTranscribing = false
-            if let text, !text.isEmpty {
-                await gradeCurrentAnswer(sttText: text)
+
+            guard let text, !text.isEmpty else {
+                // Stiller Fehlerfall vorher: Whisper lieferte nichts (Fehler
+                // oder leere Aufnahme) und es passierte einfach nichts mehr.
+                transcribedAnswer = nil
+                gradingError = "Transkription fehlgeschlagen oder leer – bitte nochmal versuchen."
+                return
             }
+            transcribedAnswer = text
+            await gradeCurrentAnswer(sttText: text)
         } else {
             transcribedAnswer = nil
             gradingResult = nil
