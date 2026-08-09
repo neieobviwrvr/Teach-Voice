@@ -6,10 +6,13 @@ struct StudyView: View {
 
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: LibraryStore
+    // Geteilt über die ganze App-Sitzung (siehe TeachVoiceApp) statt pro
+    // StudyView neu erzeugt – sonst würde das Whisper-Modell bei jedem
+    // "Lernen starten" erneut vorbereitet/heruntergeladen.
+    @EnvironmentObject private var transcriber: WhisperTranscriber
 
     @StateObject private var speech = SpeechService()
     @StateObject private var recorder = AudioRecorder()
-    @StateObject private var transcriber = WhisperTranscriber()
 
     @State private var index = 0
     @State private var transcribedAnswer: String?
