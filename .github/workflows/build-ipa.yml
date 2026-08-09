@@ -8,10 +8,26 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # XcodeGen generates a project file whose format depends on the XcodeGen
+      # version installed via Homebrew (always latest), which can be newer
+      # than the runner's *default* selected Xcode. Explicitly select the
+      # newest Xcode actually installed on the runner instead of hardcoding a
+      # version, so this doesn't silently break again on the next runner image
+      # bump. (This is what broke the first real build attempt: "future Xcode
+      # project file format" on macos-14's default Xcode 15.4.)
+      - name: Select latest available Xcode
+        run: |
+          LATEST_XCODE=$(ls -d /Applications/Xcode_*.app 2>/dev/null | sort -V | tail -1)
+          if [ -n "$LATEST_XCODE" ]; then
+            echo "Selecting $LATEST_XCODE"
+            sudo xcode-select -s "$LATEST_XCODE/Contents/Developer"
+          fi
+          xcodebuild -version
 
       - name: Install XcodeGen
         run: brew install xcodegen
