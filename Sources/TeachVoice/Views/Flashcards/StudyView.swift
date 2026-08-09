@@ -101,10 +101,13 @@ struct StudyView: View {
         }
         .navigationTitle("Lernmodus")
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            await transcriber.prepareIfNeeded()
-            if let card = currentCard { speech.speak(card.question) }
-        }
+        // Zwei getrennte .task-Modifier statt einem: die Frage soll sofort
+        // vorgelesen werden, unabhängig davon, wie lange die (einmalige,
+        // von TTS völlig unabhängige) Whisper-Vorbereitung braucht. Vorher
+        // liefen beide nacheinander in einem Task, wodurch das Vorlesen auf
+        // die Whisper-Vorbereitung warten musste.
+        .task { if let card = currentCard { speech.speak(card.question) } }
+        .task { await transcriber.prepareIfNeeded() }
         .onDisappear { speech.stop() }
     }
 
