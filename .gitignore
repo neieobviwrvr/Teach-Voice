@@ -44,3 +44,4 @@ build_output/
 
 # Supabase CLI
 .supabase/
+supabase/.temp/
