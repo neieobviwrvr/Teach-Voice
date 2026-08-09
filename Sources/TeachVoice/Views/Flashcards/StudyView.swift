@@ -65,9 +65,17 @@ struct StudyView: View {
                     } else if isGrading {
                         ProgressView("Wird bewertet…")
                     } else if let gradingError {
-                        Label(gradingError, systemImage: "exclamationmark.triangle")
-                            .font(.footnote)
-                            .foregroundStyle(.red)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Label(gradingError, systemImage: "exclamationmark.triangle")
+                                .font(.footnote)
+                                .foregroundStyle(.red)
+                            if let transcribedAnswer, !transcribedAnswer.isEmpty {
+                                Button("Bewertung erneut versuchen") {
+                                    Task { await gradeCurrentAnswer(sttText: transcribedAnswer) }
+                                }
+                                .font(.footnote)
+                            }
+                        }
                     } else if let gradingResult {
                         gradingResultView(gradingResult, card: card)
                     }
