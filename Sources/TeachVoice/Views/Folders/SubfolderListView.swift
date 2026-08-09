@@ -10,6 +10,8 @@ struct SubfolderListView: View {
     @State private var renamingSubfolder: Subfolder?
     @State private var renameText = ""
 
+    private var isFull: Bool { library.subfolders(in: folder).count >= maxSubfoldersPerFolder }
+
     var body: some View {
         List {
             ForEach(library.subfolders(in: folder)) { subfolder in
@@ -61,6 +63,7 @@ struct SubfolderListView: View {
                 } label: {
                     Label("Unterordner hinzufügen", systemImage: "plus")
                 }
+                .disabled(isFull)
             }
         }
         .overlay {

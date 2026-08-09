@@ -5,6 +5,7 @@ struct FlashcardListView: View {
 
     @EnvironmentObject private var library: LibraryStore
     @State private var showAddCard = false
+    @State private var editingCard: Flashcard?
 
     private var cards: [Flashcard] { library.flashcards(in: subfolder) }
     private var isFull: Bool { cards.count >= maxFlashcardsPerSubfolder }
@@ -23,9 +24,27 @@ struct FlashcardListView: View {
 
             Section {
                 ForEach(cards) { card in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(card.question).font(.body)
-                        Text(card.answer).font(.caption).foregroundStyle(.secondary)
+                    Button {
+                        editingCard = card
+                    } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(card.question).font(.body)
+                            Text(card.answer).font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            Task { await library.deleteFlashcard(card) }
+                        } label: {
+                            Label("Löschen", systemImage: "trash")
+                        }
+                        Button {
+                            editingCard = card
+                        } label: {
+                            Label("Bearbeiten", systemImage: "pencil")
+                        }
+                        .tint(.orange)
                     }
                 }
                 .onDelete { offsets in
@@ -36,6 +55,8 @@ struct FlashcardListView: View {
                 }
             } header: {
                 Text("\(cards.count)/\(maxFlashcardsPerSubfolder) Karteikarten")
+            } footer: {
+                Text("Tippe auf eine Karte, um Frage oder Antwort nachträglich zu ändern.")
             }
         }
         .navigationTitle(subfolder.name)
@@ -63,6 +84,11 @@ struct FlashcardListView: View {
         .sheet(isPresented: $showAddCard) {
             AddFlashcardSheet { question, answer in
                 await library.addFlashcard(question: question, answer: answer, to: subfolder)
+            }
+        }
+        .sheet(item: $editingCard) { card in
+            AddFlashcardSheet(editing: card) { question, answer in
+                await library.updateFlashcard(card, question: question, answer: answer)
             }
         }
     }

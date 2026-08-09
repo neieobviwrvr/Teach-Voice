@@ -62,5 +62,17 @@ struct Flashcard: Codable, Identifiable, Hashable {
     }
 }
 
-/// Maximale Anzahl Karteikarten pro Unterordner (siehe DB-Trigger `enforce_flashcard_limit`).
-let maxFlashcardsPerSubfolder = 20
+// Harte Limits für die Startphase (siehe DB-Trigger enforce_folder_limit /
+// enforce_subfolder_limit / enforce_flashcard_limit in
+// supabase/migrations/0003_tighter_limits.sql) – bewusst als benannte
+// Konstanten statt verstreuter Zahlen, da Simon das ausdrücklich als
+// vorläufigen Startwert bezeichnet hat, nicht als endgültige Grenze.
+
+/// Maximale Anzahl Ober-Ordner pro Nutzer.
+let maxFoldersPerUser = 1
+
+/// Maximale Anzahl Unterordner pro Ober-Ordner.
+let maxSubfoldersPerFolder = 2
+
+/// Maximale Anzahl Karteikarten pro Unterordner.
+let maxFlashcardsPerSubfolder = 10

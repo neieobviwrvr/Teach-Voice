@@ -52,6 +52,9 @@ final class LocalLibraryRepository: LibraryRepository {
     }
 
     func insertFolder(name: String) async throws -> Folder {
+        guard snapshot.folders.count < maxFoldersPerUser else {
+            throw APIError.server(status: 400, message: "Maximal \(maxFoldersPerUser) Ordner erlaubt.")
+        }
         let folder = Folder(
             id: UUID(), userId: userId, name: name, position: snapshot.folders.count,
             createdAt: Date(), updatedAt: Date()
@@ -59,6 +62,16 @@ final class LocalLibraryRepository: LibraryRepository {
         snapshot.folders.append(folder)
         persist()
         return folder
+    }
+
+    func renameFolder(id: UUID, name: String) async throws -> Folder {
+        guard let idx = snapshot.folders.firstIndex(where: { $0.id == id }) else {
+            throw APIError.server(status: 404, message: "Ordner nicht gefunden.")
+        }
+        snapshot.folders[idx].name = name
+        snapshot.folders[idx].updatedAt = Date()
+        persist()
+        return snapshot.folders[idx]
     }
 
     func deleteFolder(id: UUID) async throws {
@@ -77,6 +90,9 @@ final class LocalLibraryRepository: LibraryRepository {
 
     func insertSubfolder(name: String, folderId: UUID) async throws -> Subfolder {
         let position = snapshot.subfolders.filter { $0.folderId == folderId }.count
+        guard position < maxSubfoldersPerFolder else {
+            throw APIError.server(status: 400, message: "Maximal \(maxSubfoldersPerFolder) Unterordner pro Ordner erlaubt.")
+        }
         let subfolder = Subfolder(
             id: UUID(), folderId: folderId, userId: userId, name: name, position: position,
             createdAt: Date(), updatedAt: Date()

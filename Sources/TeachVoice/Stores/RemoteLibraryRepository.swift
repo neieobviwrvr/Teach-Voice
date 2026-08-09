@@ -69,6 +69,16 @@ final class RemoteLibraryRepository: LibraryRepository {
         )
     }
 
+    func renameFolder(id: UUID, name: String) async throws -> Folder {
+        let ctx = try await context()
+        return try await SupabaseRestClient.update(
+            table: "folders",
+            id: id,
+            body: RenamePatch(name: name),
+            accessToken: ctx.token
+        )
+    }
+
     func deleteFolder(id: UUID) async throws {
         let ctx = try await context()
         try await SupabaseRestClient.delete(table: "folders", id: id, accessToken: ctx.token)

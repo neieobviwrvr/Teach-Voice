@@ -43,10 +43,31 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func addFolder(name: String) async {
+    /// Legt einen Ober-Ordner an. Gibt `false` zurück, wenn das Limit erreicht ist
+    /// (clientseitige Vorabprüfung; im Cloud-Modus zusätzlich hart per DB-Trigger,
+    /// im Gastmodus hart im Repository selbst durchgesetzt).
+    @discardableResult
+    func addFolder(name: String) async -> Bool {
+        guard folders.count < maxFoldersPerUser else {
+            errorMessage = "Maximal \(maxFoldersPerUser) Ordner erlaubt."
+            return false
+        }
         do {
             let created = try await repository.insertFolder(name: name)
             folders.append(created)
+            return true
+        } catch {
+            errorMessage = error.localizedDescription
+            return false
+        }
+    }
+
+    func renameFolder(_ folder: Folder, to newName: String) async {
+        do {
+            let updated = try await repository.renameFolder(id: folder.id, name: newName)
+            if let idx = folders.firstIndex(where: { $0.id == folder.id }) {
+                folders[idx] = updated
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -72,12 +93,19 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func addSubfolder(name: String, to folder: Folder) async {
+    @discardableResult
+    func addSubfolder(name: String, to folder: Folder) async -> Bool {
+        guard subfolders(in: folder).count < maxSubfoldersPerFolder else {
+            errorMessage = "Maximal \(maxSubfoldersPerFolder) Unterordner pro Ordner erlaubt."
+            return false
+        }
         do {
             let created = try await repository.insertSubfolder(name: name, folderId: folder.id)
             subfolders[folder.id, default: []].append(created)
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 
@@ -132,15 +160,18 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    func updateFlashcard(_ flashcard: Flashcard, question: String, answer: String) async {
+    @discardableResult
+    func updateFlashcard(_ flashcard: Flashcard, question: String, answer: String) async -> Bool {
         do {
             let updated = try await repository.updateFlashcard(id: flashcard.id, question: question, answer: answer)
             if var list = flashcards[flashcard.subfolderId], let idx = list.firstIndex(where: { $0.id == flashcard.id }) {
                 list[idx] = updated
                 flashcards[flashcard.subfolderId] = list
             }
+            return true
         } catch {
             errorMessage = error.localizedDescription
+            return false
         }
     }
 

@@ -16,6 +16,10 @@ struct FolderListView: View {
 
     @State private var showAddFolder = false
     @State private var newFolderName = ""
+    @State private var renamingFolder: Folder?
+    @State private var renameText = ""
+
+    private var isFull: Bool { library.folders.count >= maxFoldersPerUser }
 
     var body: some View {
         NavigationStack {
@@ -32,11 +36,32 @@ struct FolderListView: View {
                     NavigationLink(value: folder) {
                         Label(folder.name, systemImage: "folder.fill")
                     }
-                }
-                .onDelete { offsets in
-                    for index in offsets {
-                        let folder = library.folders[index]
-                        Task { await library.deleteFolder(folder) }
+                    .contextMenu {
+                        Button {
+                            renamingFolder = folder
+                            renameText = folder.name
+                        } label: {
+                            Label("Umbenennen", systemImage: "pencil")
+                        }
+                        Button(role: .destructive) {
+                            Task { await library.deleteFolder(folder) }
+                        } label: {
+                            Label("Löschen", systemImage: "trash")
+                        }
+                    }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            Task { await library.deleteFolder(folder) }
+                        } label: {
+                            Label("Löschen", systemImage: "trash")
+                        }
+                        Button {
+                            renamingFolder = folder
+                            renameText = folder.name
+                        } label: {
+                            Label("Umbenennen", systemImage: "pencil")
+                        }
+                        .tint(.orange)
                     }
                 }
             }
@@ -51,6 +76,7 @@ struct FolderListView: View {
                     } label: {
                         Label("Ordner hinzufügen", systemImage: "plus")
                     }
+                    .disabled(isFull)
                 }
                 ToolbarItem(placement: .topBarLeading) {
                     Button(mode == .guest ? "Gastmodus verlassen" : "Abmelden", role: .destructive) {
@@ -66,6 +92,7 @@ struct FolderListView: View {
                         .frame(maxWidth: .infinity)
                 }
                 .buttonStyle(.borderedProminent)
+                .disabled(isFull)
                 .padding()
             }
             .overlay {
@@ -87,6 +114,22 @@ struct FolderListView: View {
                     guard !name.isEmpty else { return }
                     Task { await library.addFolder(name: name) }
                     newFolderName = ""
+                }
+            }
+            .alert("Ordner umbenennen", isPresented: Binding(
+                get: { renamingFolder != nil },
+                set: { if !$0 { renamingFolder = nil } }
+            )) {
+                TextField("Name", text: $renameText)
+                Button("Abbrechen", role: .cancel) { renamingFolder = nil }
+                Button("Speichern") {
+                    if let folder = renamingFolder {
+                        let name = renameText.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !name.isEmpty {
+                            Task { await library.renameFolder(folder, to: name) }
+                        }
+                    }
+                    renamingFolder = nil
                 }
             }
             .alert("Fehler", isPresented: Binding(

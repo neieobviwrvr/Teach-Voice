@@ -11,6 +11,7 @@ import Foundation
 protocol LibraryRepository: AnyObject {
     func fetchFolders() async throws -> [Folder]
     func insertFolder(name: String) async throws -> Folder
+    func renameFolder(id: UUID, name: String) async throws -> Folder
     func deleteFolder(id: UUID) async throws
 
     func fetchSubfolders(folderId: UUID) async throws -> [Subfolder]

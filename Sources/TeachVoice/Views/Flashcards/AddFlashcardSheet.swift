@@ -1,14 +1,24 @@
 import SwiftUI
 
-/// Popup, das beim Tippen auf das Plus-Symbol im Unterordner erscheint:
-/// oben ein Block für die Frage, darunter ein Block für die passende Antwort.
+/// Popup zum Anlegen ODER Bearbeiten einer Karteikarte: oben ein Block für die
+/// Frage, darunter ein Block für die passende (Muster-)Antwort. Wird sowohl
+/// vom Plus-Symbol im Unterordner (neue Karte) als auch per Tap auf eine
+/// bestehende Karte (Bearbeiten) verwendet.
 struct AddFlashcardSheet: View {
+    let editing: Flashcard?
     let onSave: (_ question: String, _ answer: String) async -> Bool
     @Environment(\.dismiss) private var dismiss
 
-    @State private var question = ""
-    @State private var answer = ""
+    @State private var question: String
+    @State private var answer: String
     @State private var isSaving = false
+
+    init(editing: Flashcard? = nil, onSave: @escaping (_ question: String, _ answer: String) async -> Bool) {
+        self.editing = editing
+        self.onSave = onSave
+        _question = State(initialValue: editing?.question ?? "")
+        _answer = State(initialValue: editing?.answer ?? "")
+    }
 
     var body: some View {
         NavigationStack {
@@ -22,7 +32,7 @@ struct AddFlashcardSheet: View {
                         .frame(minHeight: 100)
                 }
             }
-            .navigationTitle("Neue Karteikarte")
+            .navigationTitle(editing == nil ? "Neue Karteikarte" : "Karteikarte bearbeiten")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {

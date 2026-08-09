@@ -7,7 +7,8 @@ iOS-App (SwiftUI) für sprachbasiertes Karteikarten-Lernen an der Uni:
 
 ## Struktur
 
-- Ordner (Ober-Ordner) → Unterordner (umbenennbar) → Karteikarten (Frage + Antwort), max. 20 Karten pro Unterordner.
+- Ordner (Ober-Ordner, umbenennbar) → Unterordner (umbenennbar) → Karteikarten (Frage + Antwort, nachträglich bearbeitbar).
+- **Harte Limits für die Startphase** (ausdrücklich vorläufig, siehe `Models.swift`): max. **1 Ober-Ordner** pro Nutzer, max. **2 Unterordner** pro Ober-Ordner, max. **10 Karteikarten** pro Unterordner. Jeweils per DB-Trigger (Cloud) und Repository-Check (Gastmodus) durchgesetzt, siehe `supabase/migrations/0003_tighter_limits.sql`.
 - Auth: **E-Mail + Passwort** (Supabase) **oder Gastzugang** (rein lokal, kein Konto, kein Server-Roundtrip).
   Sign in with Apple/Google folgt später (siehe Task #9) – aktuell bewusst nicht eingebaut.
 

@@ -60,7 +60,11 @@ The OpenAI API key exists only as a Supabase Edge Function secret (`OPENAI_API_K
 
 ### Data model / RLS
 
-`folders` → `subfolders` → `flashcards` (question/answer text), one Postgres migration per change under `supabase/migrations/`. Every table has Row Level Security scoped to `auth.uid() = user_id`. Max 20 flashcards per subfolder is enforced twice: a Postgres trigger (`enforce_flashcard_limit`, cloud mode) and an equivalent check inside `LocalLibraryRepository` (guest mode) — keep both in sync if this limit ever changes.
+`folders` → `subfolders` → `flashcards` (question/answer text), one Postgres migration per change under `supabase/migrations/`. Every table has Row Level Security scoped to `auth.uid() = user_id`.
+
+**Hard limits, deliberately tight for the current starting phase** (Simon called these explicit starting values, not a final ceiling — expect them to loosen later): max 1 folder per user, max 2 subfolders per folder, max 10 flashcards per subfolder. Named constants in `Models.swift` (`maxFoldersPerUser`, `maxSubfoldersPerFolder`, `maxFlashcardsPerSubfolder`). Each is enforced *twice* — a Postgres trigger (`enforce_folder_limit` / `enforce_subfolder_limit` / `enforce_flashcard_limit`, cloud mode, see `supabase/migrations/0003_tighter_limits.sql`) and an equivalent check inside `LocalLibraryRepository` (guest mode) — keep both sides in sync if any of these limits change. `LibraryStore` also does a client-side pre-check for immediate UI feedback before ever calling the repository.
+
+Both folders and subfolders are renameable (context menu / swipe in their list views); flashcards are editable in place (tap opens `AddFlashcardSheet` pre-filled, reusing the same sheet used for creation). Editing a flashcard's model answer is exactly the case the STT-grading lazy-cache (`kernelemente_source_hash`) exists to catch — no extra invalidation code needed, the next review just naturally misses the cache and re-extracts.
 
 ### CI / distribution
 
