@@ -55,6 +55,13 @@ targets:
         CODE_SIGN_STYLE: Manual
         CODE_SIGNING_REQUIRED: "NO"
         CODE_SIGNING_ALLOWED: "NO"
+        # Testet reine Logik (kein UI/App-Runtime-Zustand nötig) -> bewusst OHNE
+        # Host-App laufen lassen ("Host Application: None"), statt die App erst
+        # für den Simulator bauen+starten zu müssen, nur um @testable import zu
+        # nutzen. Ohne das erwartet Xcode einen TEST_HOST-Pfad zur .app, den es
+        # zum Testzeitpunkt noch nicht gibt -> "Could not find test host".
+        TEST_HOST: ""
+        BUNDLE_LOADER: ""
     dependencies:
       - target: TeachVoice
 
