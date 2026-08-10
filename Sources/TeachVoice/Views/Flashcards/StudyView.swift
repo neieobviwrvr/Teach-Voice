@@ -20,6 +20,11 @@ struct StudyView: View {
     @State private var isGrading = false
     @State private var gradingResult: GradingResult?
     @State private var gradingError: String?
+    /// Der User hat immer das letzte Wort: die KI-Bewertung ist nur eine
+    /// Einschätzung/Hilfestellung, vorbelegt mit ihrem Urteil, aber frei
+    /// überschreibbar. Noch nicht persistiert – reine In-Session-Bestätigung,
+    /// bis es eine Fortschritts-/Wiederholungs-Funktion gibt, die das braucht.
+    @State private var selfAssessment: GradingResult.Urteil?
 
     private var currentCard: Flashcard? {
         cards.indices.contains(index) ? cards[index] : nil
@@ -147,10 +152,47 @@ struct StudyView: View {
             Divider()
             Text("Musterantwort:").font(.caption).foregroundStyle(.secondary)
             Text(card.answer).font(.caption)
+
+            Divider()
+            Text("Wie empfindest du deine Antwort selbst?")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                selfAssessmentButton(.richtig, label: "Richtig\n(gewusst)")
+                selfAssessmentButton(.teilweise, label: "Teilweise richtig\n(fast gewusst)")
+                selfAssessmentButton(.falsch, label: "Falsch\n(nicht gewusst)")
+            }
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(verdictColor(result.urteil).opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Ein Selbsteinschätzungs-Button. Die KI-Bewertung dient nur als
+    /// Vorschlag (vorbelegt in `gradeCurrentAnswer`) – der User kann jederzeit
+    /// eine andere der drei Stufen wählen, das ist die eigentliche, finale
+    /// Einschätzung.
+    private func selfAssessmentButton(_ urteil: GradingResult.Urteil, label: String) -> some View {
+        let isSelected = selfAssessment == urteil
+        return Button {
+            selfAssessment = urteil
+        } label: {
+            Text(label)
+                .font(.caption2)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+        }
+        .buttonStyle(.bordered)
+        .tint(verdictColor(urteil))
+        .background(
+            isSelected ? verdictColor(urteil).opacity(0.3) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 8)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? verdictColor(urteil) : .clear, lineWidth: 2)
+        )
     }
 
     private func verdictLabel(_ urteil: GradingResult.Urteil) -> String {
@@ -228,6 +270,7 @@ struct StudyView: View {
             transcribedAnswer = nil
             gradingResult = nil
             gradingError = nil
+            selfAssessment = nil
             await recorder.startRecording()
         }
     }
@@ -252,6 +295,8 @@ struct StudyView: View {
                 accessToken: token
             )
             gradingResult = result
+            // Vorschlag vorbelegen – der User kann das jederzeit überschreiben.
+            selfAssessment = result.urteil
             if !cacheStillValid {
                 await library.cacheKernelemente(kernelemente, for: card, sourceHash: currentHash)
             }
@@ -264,6 +309,7 @@ struct StudyView: View {
         transcribedAnswer = nil
         gradingResult = nil
         gradingError = nil
+        selfAssessment = nil
         index += 1
         if let card = currentCard {
             speech.speak(card.question)
