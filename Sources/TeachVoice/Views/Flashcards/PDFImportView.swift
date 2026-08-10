@@ -292,12 +292,38 @@ struct PDFImportView: View {
 
     private func saveSelected() {
         isSaving = true
+        errorMessage = nil
         Task {
-            for candidate in candidates where candidate.isSelected {
-                await library.addFlashcard(question: candidate.question.frage, answer: candidate.question.musterantwort, to: subfolder)
+            // Nur erfolgreich gespeicherte Kandidaten werden aus der Liste
+            // entfernt – nicht ausgewählte UND fehlgeschlagene bleiben stehen.
+            // Damit legt ein erneuter Tap auf "Speichern" nach einem
+            // Teil-Fehlschlag nichts doppelt an, und der User sieht genau, was
+            // (noch) fehlt, statt dass Karten lautlos verschwinden.
+            var remaining: [ReviewCandidate] = []
+            var failedCount = 0
+
+            for candidate in candidates {
+                guard candidate.isSelected else {
+                    remaining.append(candidate)
+                    continue
+                }
+                let success = await library.addFlashcard(
+                    question: candidate.question.frage, answer: candidate.question.musterantwort, to: subfolder
+                )
+                if !success {
+                    failedCount += 1
+                    remaining.append(candidate)
+                }
             }
+
+            candidates = remaining
             isSaving = false
-            dismiss()
+
+            if failedCount > 0 {
+                errorMessage = "\(failedCount) Karte(n) konnten nicht gespeichert werden (z.B. weil der Unterordner voll wurde). Die übrigen wurden angelegt."
+            } else {
+                dismiss()
+            }
         }
     }
 }

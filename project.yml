@@ -43,3 +43,32 @@ targets:
     dependencies:
       - package: WhisperKit
         product: WhisperKit
+
+  TeachVoiceTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests/TeachVoiceTests
+    settings:
+      base:
+        SWIFT_VERSION: "5.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGNING_REQUIRED: "NO"
+        CODE_SIGNING_ALLOWED: "NO"
+    dependencies:
+      - target: TeachVoice
+
+schemes:
+  TeachVoice:
+    build:
+      targets:
+        TeachVoice: all
+        TeachVoiceTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - TeachVoiceTests
+    archive:
+      config: Release
