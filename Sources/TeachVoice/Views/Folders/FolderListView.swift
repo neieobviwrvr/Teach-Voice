@@ -42,74 +42,31 @@ struct FolderListView: View {
 
     private var isFull: Bool { library.folders.count >= maxFoldersPerUser }
 
+    /// Vorberechnet statt inline in den ConfirmationDialogs – Swifts
+    /// Type-Checker kommt bei String-Verkettung direkt in einem ViewBuilder-
+    /// Closure sonst leicht an seine Grenzen (siehe unten, `body` musste aus
+    /// demselben Grund in mehrere Teilausdrücke aufgesplittet werden).
+    private var strictnessExplanation: String {
+        GradingStrictness.normal.description + "\n" + GradingStrictness.tryhard.description
+    }
+
     var body: some View {
         NavigationStack {
-            List {
-                if mode == .guest {
-                    Section {
-                        Label("Gastmodus – Karten sind nur auf diesem Gerät gespeichert.", systemImage: "iphone")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
-                }
+            withHandsFreeDialogs(withCoreAlerts(navigationList))
+        }
+    }
 
-                Section {
-                    Button {
-                        Task { await startVoiceOnlyFlow() }
-                    } label: {
-                        Label(
-                            isLoadingHandsFree ? "Lädt…" : "Hands-free (Voice only)",
-                            systemImage: "waveform"
-                        )
-                    }
-                    .disabled(isLoadingHandsFree)
+    // MARK: - Aufgesplittete Teilausdrücke (Compiler-Timeout-Workaround)
+    //
+    // Der komplette Bildschirm in EINEM einzigen verketteten Ausdruck ließ
+    // Swifts Type-Checker beim ersten echten Build mit "unable to type-check
+    // this expression in reasonable time" scheitern. Aufteilen in mehrere
+    // Computed Properties/Methoden mit je eigener, expliziter Signatur behebt
+    // das, weil jedes Stück unabhängig typgeprüft wird statt alles auf einmal.
 
-                    Button {
-                        Task { await startEigenbewertungFlow() }
-                    } label: {
-                        Label(
-                            isLoadingHandsFree ? "Lädt…" : "Hands-free lernen (Eigenbewertung)",
-                            systemImage: "hand.tap"
-                        )
-                    }
-                    .disabled(isLoadingHandsFree)
-                } footer: {
-                    Text("\"Voice only\": komplett per Sprache, die App fragt dich selbst welchen Unterordner du lernen willst, GPT bewertet allein. \"Eigenbewertung\": Unterordner per Pop-up wählen, nach jeder Frage entscheidest du selbst per Button.")
-                }
-
-                ForEach(library.folders) { folder in
-                    NavigationLink(value: folder) {
-                        Label(folder.name, systemImage: "folder.fill")
-                    }
-                    .contextMenu {
-                        Button {
-                            renamingFolder = folder
-                            renameText = folder.name
-                        } label: {
-                            Label("Umbenennen", systemImage: "pencil")
-                        }
-                        Button(role: .destructive) {
-                            Task { await library.deleteFolder(folder) }
-                        } label: {
-                            Label("Löschen", systemImage: "trash")
-                        }
-                    }
-                    .swipeActions(edge: .trailing) {
-                        Button(role: .destructive) {
-                            Task { await library.deleteFolder(folder) }
-                        } label: {
-                            Label("Löschen", systemImage: "trash")
-                        }
-                        Button {
-                            renamingFolder = folder
-                            renameText = folder.name
-                        } label: {
-                            Label("Umbenennen", systemImage: "pencil")
-                        }
-                        .tint(.orange)
-                    }
-                }
-            }
+    @ViewBuilder
+    private var navigationList: some View {
+        mainList
             .navigationDestination(for: Folder.self) { folder in
                 SubfolderListView(folder: folder)
             }
@@ -120,46 +77,139 @@ struct FolderListView: View {
                 HandsFreeSelfAssessmentStudyView(cards: cards, title: eigenbewertungTitle, strictness: eigenbewertungStrictness)
             }
             .navigationTitle("Meine Ordner")
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        showAddFolder = true
-                    } label: {
-                        Label("Ordner hinzufügen", systemImage: "plus")
-                    }
-                    .disabled(isFull)
-                }
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(mode == .guest ? "Gastmodus verlassen" : "Abmelden", role: .destructive) {
-                        auth.leaveCurrentSession()
-                    }
-                }
-            }
-            .safeAreaInset(edge: .bottom) {
-                Button {
-                    showAddFolder = true
-                } label: {
-                    Label("Ordner hinzufügen", systemImage: "folder.badge.plus")
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(isFull)
-                .padding()
-            }
-            .overlay {
-                if library.folders.isEmpty && !library.isLoading {
-                    ContentUnavailableView(
-                        "Noch keine Ordner",
-                        systemImage: "folder",
-                        description: Text("Tippe auf \"Ordner hinzufügen\", um loszulegen.")
-                    )
-                }
-            }
+            .toolbar { mainToolbar }
+            .safeAreaInset(edge: .bottom) { addFolderBottomButton }
+            .overlay { emptyStateOverlay }
             .task { await library.loadFolders() }
             // Proaktiver Hinweis: die App funktioniert im Kern erst richtig,
             // wenn der Mikrofonzugriff erlaubt ist (STT-Lernmodus).
             .task { showMicPermissionNotice = !MicrophonePermission.isGranted }
             .refreshable { await library.loadFolders() }
+    }
+
+    @ViewBuilder
+    private var mainList: some View {
+        List {
+            if mode == .guest {
+                Section {
+                    Label("Gastmodus – Karten sind nur auf diesem Gerät gespeichert.", systemImage: "iphone")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            handsFreeSection
+            folderRows
+        }
+    }
+
+    @ViewBuilder
+    private var handsFreeSection: some View {
+        Section {
+            Button {
+                Task { await startVoiceOnlyFlow() }
+            } label: {
+                Label(
+                    isLoadingHandsFree ? "Lädt…" : "Hands-free (Voice only)",
+                    systemImage: "waveform"
+                )
+            }
+            .disabled(isLoadingHandsFree)
+
+            Button {
+                Task { await startEigenbewertungFlow() }
+            } label: {
+                Label(
+                    isLoadingHandsFree ? "Lädt…" : "Hands-free lernen (Eigenbewertung)",
+                    systemImage: "hand.tap"
+                )
+            }
+            .disabled(isLoadingHandsFree)
+        } footer: {
+            Text("\"Voice only\": komplett per Sprache, die App fragt dich selbst welchen Unterordner du lernen willst, GPT bewertet allein. \"Eigenbewertung\": Unterordner per Pop-up wählen, nach jeder Frage entscheidest du selbst per Button.")
+        }
+    }
+
+    @ViewBuilder
+    private var folderRows: some View {
+        ForEach(library.folders) { folder in
+            NavigationLink(value: folder) {
+                Label(folder.name, systemImage: "folder.fill")
+            }
+            .contextMenu {
+                Button {
+                    renamingFolder = folder
+                    renameText = folder.name
+                } label: {
+                    Label("Umbenennen", systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                    Task { await library.deleteFolder(folder) }
+                } label: {
+                    Label("Löschen", systemImage: "trash")
+                }
+            }
+            .swipeActions(edge: .trailing) {
+                Button(role: .destructive) {
+                    Task { await library.deleteFolder(folder) }
+                } label: {
+                    Label("Löschen", systemImage: "trash")
+                }
+                Button {
+                    renamingFolder = folder
+                    renameText = folder.name
+                } label: {
+                    Label("Umbenennen", systemImage: "pencil")
+                }
+                .tint(.orange)
+            }
+        }
+    }
+
+    @ToolbarContentBuilder
+    private var mainToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarTrailing) {
+            Button {
+                showAddFolder = true
+            } label: {
+                Label("Ordner hinzufügen", systemImage: "plus")
+            }
+            .disabled(isFull)
+        }
+        ToolbarItem(placement: .topBarLeading) {
+            Button(mode == .guest ? "Gastmodus verlassen" : "Abmelden", role: .destructive) {
+                auth.leaveCurrentSession()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var addFolderBottomButton: some View {
+        Button {
+            showAddFolder = true
+        } label: {
+            Label("Ordner hinzufügen", systemImage: "folder.badge.plus")
+                .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(isFull)
+        .padding()
+    }
+
+    @ViewBuilder
+    private var emptyStateOverlay: some View {
+        if library.folders.isEmpty && !library.isLoading {
+            ContentUnavailableView(
+                "Noch keine Ordner",
+                systemImage: "folder",
+                description: Text("Tippe auf \"Ordner hinzufügen\", um loszulegen.")
+            )
+        }
+    }
+
+    @ViewBuilder
+    private func withCoreAlerts<Content: View>(_ content: Content) -> some View {
+        content
             .alert("Neuer Ordner", isPresented: $showAddFolder) {
                 TextField("Name", text: $newFolderName)
                 Button("Abbrechen", role: .cancel) { newFolderName = "" }
@@ -200,6 +250,11 @@ struct FolderListView: View {
             } message: {
                 Text("Teach (Voice) funktioniert im Kern erst richtig, wenn du den Mikrofonzugriff erlaubst – ohne ihn kann deine gesprochene Antwort im Lernmodus nicht erkannt werden.")
             }
+    }
+
+    @ViewBuilder
+    private func withHandsFreeDialogs<Content: View>(_ content: Content) -> some View {
+        content
             .confirmationDialog(
                 "Wie streng bewerten?",
                 isPresented: $showVoiceOnlyStrictnessPicker,
@@ -213,25 +268,14 @@ struct FolderListView: View {
                 }
                 Button("Abbrechen", role: .cancel) {}
             } message: {
-                Text(GradingStrictness.normal.description + "\n" + GradingStrictness.tryhard.description)
+                Text(strictnessExplanation)
             }
             .confirmationDialog(
                 "Unterordner für Hands-free wählen",
                 isPresented: $showEigenbewertungSubfolderPicker,
                 titleVisibility: .visible
             ) {
-                if eigenbewertungSubfolderOptions.count > 1 {
-                    let totalCards = eigenbewertungSubfolderOptions.reduce(0) { $0 + library.flashcards(in: $1).count }
-                    Button("Alle Unterordner lernen (\(eigenbewertungSubfolderOptions.count) Unterordner, \(totalCards) Karten)") {
-                        Task { await prepareEigenbewertung(subfolders: eigenbewertungSubfolderOptions, title: "Alle Unterordner") }
-                    }
-                }
-                ForEach(eigenbewertungSubfolderOptions) { subfolder in
-                    Button("\(subfolder.name) (\(library.flashcards(in: subfolder).count) Karten)") {
-                        Task { await prepareEigenbewertung(subfolders: [subfolder], title: subfolder.name) }
-                    }
-                }
-                Button("Abbrechen", role: .cancel) {}
+                eigenbewertungSubfolderPickerButtons
             }
             .confirmationDialog(
                 "Wie streng bewerten?",
@@ -247,9 +291,24 @@ struct FolderListView: View {
                 }
                 Button("Abbrechen", role: .cancel) {}
             } message: {
-                Text(GradingStrictness.normal.description + "\n" + GradingStrictness.tryhard.description)
+                Text(strictnessExplanation)
+            }
+    }
+
+    @ViewBuilder
+    private var eigenbewertungSubfolderPickerButtons: some View {
+        if eigenbewertungSubfolderOptions.count > 1 {
+            let totalCards = eigenbewertungSubfolderOptions.reduce(0) { $0 + library.flashcards(in: $1).count }
+            Button("Alle Unterordner lernen (\(eigenbewertungSubfolderOptions.count) Unterordner, \(totalCards) Karten)") {
+                Task { await prepareEigenbewertung(subfolders: eigenbewertungSubfolderOptions, title: "Alle Unterordner") }
             }
         }
+        ForEach(eigenbewertungSubfolderOptions) { subfolder in
+            Button("\(subfolder.name) (\(library.flashcards(in: subfolder).count) Karten)") {
+                Task { await prepareEigenbewertung(subfolders: [subfolder], title: subfolder.name) }
+            }
+        }
+        Button("Abbrechen", role: .cancel) {}
     }
 
     // MARK: - Hands-free (Voice only)
