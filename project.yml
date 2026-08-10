@@ -30,7 +30,14 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.simonweinmann.teachvoice
-        PRODUCT_NAME: Teach (Voice)
+        # Bewusst OHNE Leerzeichen/Klammern (anders als der App-Name auf dem
+        # Homescreen, der weiterhin über CFBundleDisplayName unten separat
+        # "Teach (Voice)" heißt): XcodeGens automatisch generierter
+        # TEST_HOST-Pfad fürs Test-Target nutzt den reinen Target-Namen
+        # ("TeachVoice"), nicht den PRODUCT_NAME – ein Mismatch hier war die
+        # eigentliche Ursache von "Could not find test host" (nicht Timing/
+        # Scheme-Struktur, wie in den vorherigen CI-Läufen vermutet).
+        PRODUCT_NAME: TeachVoice
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         MARKETING_VERSION: "0.1.0"
