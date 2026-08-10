@@ -67,9 +67,19 @@ final class AudioRecorder: NSObject, ObservableObject {
     /// Sekunden am Stück still war (kurze Formulierungspausen darunter zählen
     /// nicht), oder bis `maxDuration` als Sicherheitsnetz erreicht ist (falls
     /// z.B. Hintergrundgeräusche eine echte Stille verhindern).
+    ///
+    /// Die Stille-Schwelle ist bewusst NICHT fest, sondern wird zu Beginn
+    /// jeder Aufnahme aus der tatsächlichen Umgebungslautstärke berechnet
+    /// (Kalibrierungsfenster + Sicherheitsabstand) – ein fixer Wert würde in
+    /// lauten Umgebungen (Café, Bahn, WG-Küche) nie "Stille" erkennen, weil
+    /// die Umgebung selbst schon lauter als jeder sinnvolle feste Schwellwert
+    /// wäre.
     func recordUntilSilence(
+        calibrationDuration: TimeInterval = 1.0,
+        silenceMargin: Float = 12.0,
+        minSilenceThresholdDB: Float = -50.0,
+        maxSilenceThresholdDB: Float = -20.0,
         silenceTimeout: TimeInterval = 5.0,
-        silenceThresholdDB: Float = -35.0,
         maxDuration: TimeInterval = 45.0
     ) async -> URL? {
         guard await beginRecording() else { return nil }
@@ -77,6 +87,8 @@ final class AudioRecorder: NSObject, ObservableObject {
         let pollInterval: TimeInterval = 0.2
         var silenceElapsed: TimeInterval = 0
         var totalElapsed: TimeInterval = 0
+        var ambientSamples: [Float] = []
+        var silenceThresholdDB: Float?
 
         while isRecording {
             try? await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
@@ -84,13 +96,28 @@ final class AudioRecorder: NSObject, ObservableObject {
 
             recorder.updateMeters()
             let level = recorder.averagePower(forChannel: 0)
+            totalElapsed += pollInterval
 
-            if level < silenceThresholdDB {
+            if totalElapsed <= calibrationDuration {
+                // Kalibrierungsfenster: noch keine Stille-Erkennung, nur die
+                // Umgebungslautstärke sammeln (Annahme: die ersten ~1s sind
+                // noch kein Sprechbeginn, sondern Raumgeräusch).
+                ambientSamples.append(level)
+                continue
+            }
+
+            if silenceThresholdDB == nil {
+                let ambientFloor = ambientSamples.isEmpty
+                    ? minSilenceThresholdDB
+                    : ambientSamples.reduce(0, +) / Float(ambientSamples.count)
+                silenceThresholdDB = min(maxSilenceThresholdDB, max(minSilenceThresholdDB, ambientFloor + silenceMargin))
+            }
+
+            if let threshold = silenceThresholdDB, level < threshold {
                 silenceElapsed += pollInterval
             } else {
                 silenceElapsed = 0
             }
-            totalElapsed += pollInterval
 
             if silenceElapsed >= silenceTimeout || totalElapsed >= maxDuration {
                 break
