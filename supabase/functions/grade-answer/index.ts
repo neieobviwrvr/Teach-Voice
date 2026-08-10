@@ -177,6 +177,15 @@ als FEHLEND, wenn der Kerngedanke selbst nicht erkennbar ist – nicht schon, we
 einzelnes Fachwort oder Nebendetail fehlt. Bei einem Grenzfall zwischen "getroffen" und
 "nicht getroffen" entscheide GROSSZÜGIG zugunsten der/des Studierenden.
 
+Wichtig zu "deckung_prozent" bei mehrteiligen Kernelementen: Manche Kernelemente bündeln
+mehrere eigenständige Teilaussagen (z.B. zwei Fakten, die man unabhängig voneinander
+wissen oder nicht wissen kann, nicht nur einen Kerngedanken mit einem Nebendetail). Wird
+davon nur ein Teil korrekt genannt, zähle dieses Element NICHT einfach binär als
+"fehlend" – rechne den getroffenen Teilaspekt anteilig in "deckung_prozent" ein (z.B.
+zählt ein zur Hälfte abgedecktes Element mit halbem Gewicht statt mit vollem Gewicht als
+verfehlt). "deckung_prozent" soll die tatsächliche inhaltliche Gesamtabdeckung
+widerspiegeln, nicht nur ein starres (Anzahl komplett getroffen) / (Anzahl gesamt).
+
 Frage: ${question}
 
 Kernelemente der Musterantwort (jedes einzeln auf sinngemäßes Vorkommen prüfen):
