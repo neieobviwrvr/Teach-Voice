@@ -25,6 +25,10 @@ struct HandsFreeStudyView: View {
     @State private var index = 0
     @State private var lastVerdict: Bool?
     @State private var statusText = "Bereit…"
+    /// Solange true, wird gerade auf die Antwort gewartet – zeigt den
+    /// "Lösung abgeben"-Fallback-Button für den Fall, dass die automatische
+    /// Stille-Erkennung durch Umgebungslärm nicht zuverlässig auslöst.
+    @State private var isListening = false
 
     /// Eigene, großzügigere Schwelle nur für diesen binären Modus (statt der
     /// 65%/40%-Dreistufigkeit im Detail-Modus) – auf Wunsch bewusst bei 50%.
@@ -58,6 +62,16 @@ struct HandsFreeStudyView: View {
                 Text(statusText)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
+
+                if isListening {
+                    Button {
+                        recorder.requestManualStop()
+                    } label: {
+                        Label("Lösung abgeben", systemImage: "checkmark.circle")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
 
                 Spacer()
 
@@ -101,8 +115,12 @@ struct HandsFreeStudyView: View {
             try? await Task.sleep(nanoseconds: 1_500_000_000)
             if Task.isCancelled { break }
 
-            statusText = "Höre zu…"
-            guard let url = await recorder.recordUntilSilence() else {
+            statusText = "Höre zu… (oder \"Lösung abgeben\" tippen)"
+            isListening = true
+            let url = await recorder.recordUntilSilence()
+            isListening = false
+
+            guard let url else {
                 if recorder.permissionDenied {
                     statusText = "Mikrofonzugriff verweigert."
                     break

@@ -9,6 +9,14 @@ final class AudioRecorder: NSObject, ObservableObject {
 
     private var recorder: AVAudioRecorder?
     private(set) var lastRecordingURL: URL?
+    /// Manueller Fallback für `recordUntilSilence`, falls die Umgebungslautstärke
+    /// die automatische Stille-Erkennung unzuverlässig macht (z.B. schwankender
+    /// Lärmpegel) – z.B. per "Lösung abgeben"-Button gesetzt.
+    private var manualStopRequested = false
+
+    func requestManualStop() {
+        manualStopRequested = true
+    }
 
     func requestPermission() async -> Bool {
         await withCheckedContinuation { continuation in
@@ -82,6 +90,7 @@ final class AudioRecorder: NSObject, ObservableObject {
         silenceTimeout: TimeInterval = 5.0,
         maxDuration: TimeInterval = 45.0
     ) async -> URL? {
+        manualStopRequested = false
         guard await beginRecording() else { return nil }
 
         let pollInterval: TimeInterval = 0.2
@@ -93,6 +102,11 @@ final class AudioRecorder: NSObject, ObservableObject {
         while isRecording {
             try? await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
             guard let recorder, recorder.isRecording else { break }
+
+            if manualStopRequested {
+                manualStopRequested = false
+                break
+            }
 
             recorder.updateMeters()
             let level = recorder.averagePower(forChannel: 0)
