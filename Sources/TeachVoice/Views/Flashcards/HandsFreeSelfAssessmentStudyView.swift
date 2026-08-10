@@ -37,6 +37,14 @@ struct HandsFreeSelfAssessmentStudyView: View {
     @State private var showSubfolderPicker = false
     @State private var subfolderOptions: [Subfolder] = []
 
+    /// Der Hintergrund-Task, der `runLoop()` antreibt. `restartSession()` und
+    /// `switchTo(subfolder:)` starten sonst über `Task { await runLoop() }`
+    /// einen ZWEITEN, unabhängigen Loop, während der alte (z.B. noch bei der
+    /// Abschluss-Ansage) im Hintergrund weiterläuft – beide würden sich dann
+    /// denselben Recorder/Speech-Service teilen. `startLoop()` bricht den
+    /// alten deshalb immer zuerst ab.
+    @State private var loopTask: Task<Void, Never>?
+
     init(cards: [Flashcard], title: String, strictness: GradingStrictness) {
         _cards = State(initialValue: SpacedRepetition.ordered(cards))
         _title = State(initialValue: title)
@@ -127,7 +135,7 @@ struct HandsFreeSelfAssessmentStudyView: View {
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task { await transcriber.prepareIfNeeded() }
-        .task { await runLoop() }
+        .task { startLoop() }
         .onDisappear { stopEverything() }
         .alert("Mikrofonzugriff benötigt", isPresented: $recorder.permissionDenied) {
             Button("Zugriff erlauben") { MicrophonePermission.requestOrOpenSettings() }
@@ -266,9 +274,26 @@ struct HandsFreeSelfAssessmentStudyView: View {
         }
     }
 
+    /// Startet `runLoop()` als neuen, verfolgbaren Task – bricht dabei IMMER
+    /// zuerst einen eventuell noch laufenden alten Loop ab (siehe
+    /// `loopTask`-Kommentar). Zentrale Stelle statt `Task { await runLoop() }`
+    /// an jeder Aufrufstelle einzeln zu schreiben.
+    private func startLoop() {
+        loopTask?.cancel()
+        loopTask = Task { await runLoop() }
+    }
+
     private func stopEverything() {
         speech.stop()
         if recorder.isRecording { _ = recorder.stopRecording() }
+        loopTask?.cancel()
+        loopTask = nil
+        // `selfAssessmentContinuation` bewusst NICHT hier mitauflösen: ein
+        // untergeschobenes Urteil (z.B. "falsch") würde echte
+        // Spaced-Repetition-Daten für eine Karte schreiben, die der User nie
+        // wirklich eingeschätzt hat. Bleibt sie offen, verschwindet sie beim
+        // Verlassen der View einfach mit ihr (harmlos, höchstens eine
+        // Konsolen-Warnung) statt einen falschen Lernstand zu speichern.
     }
 
     private func stopEverythingAndClose() {
@@ -281,7 +306,7 @@ struct HandsFreeSelfAssessmentStudyView: View {
         index = 0
         sessionResults = []
         statusText = "Bereit…"
-        Task { await runLoop() }
+        startLoop()
     }
 
     private func loadSubfolderOptions() async {
@@ -309,6 +334,6 @@ struct HandsFreeSelfAssessmentStudyView: View {
         index = 0
         sessionResults = []
         statusText = "Bereit…"
-        Task { await runLoop() }
+        startLoop()
     }
 }

@@ -60,6 +60,13 @@ struct HandsFreeStudyView: View {
     /// durch den manuellen "Anderen Unterordner wählen"-Button auf dem
     /// End-Screen, je nachdem was zuerst eintrifft.
     @State private var nextStepContinuation: CheckedContinuation<Subfolder?, Never>?
+    /// Der Hintergrund-Task, der den sprachgesteuerten "weiterlernen?"-Ablauf
+    /// aus `decideNextSubfolder()` antreibt. Gewinnt stattdessen der manuelle
+    /// Button (oder wird der Modus verlassen), wird dieser Task explizit
+    /// abgebrochen statt verwaist weiterzulaufen – sonst würde er im
+    /// Hintergrund weiter TTS/Mikrofon benutzen, während längst der nächste
+    /// Unterordner/die nächste Frage denselben Recorder braucht.
+    @State private var pendingContinueTask: Task<Void, Never>?
 
     var body: some View {
         VStack(spacing: 24) {
@@ -216,12 +223,15 @@ struct HandsFreeStudyView: View {
     private func decideNextSubfolder() async -> Subfolder? {
         await withCheckedContinuation { (continuation: CheckedContinuation<Subfolder?, Never>) in
             nextStepContinuation = continuation
-            Task {
+            pendingContinueTask = Task {
                 let wantsMore = await askContinueViaVoice()
+                if Task.isCancelled { return }
                 guard nextStepContinuation != nil else { return } // schon per Button aufgelöst
                 if wantsMore {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    if Task.isCancelled { return }
                     await speech.speakAndWait("Welchen Unterordner willst du lernen?")
+                    if Task.isCancelled { return }
                     let subfolder = await selectSubfolderViaVoice()
                     resolveNextStep(subfolder)
                 } else {
@@ -231,9 +241,16 @@ struct HandsFreeStudyView: View {
         }
     }
 
+    /// Löst die Entscheidung auf UND beendet – falls noch aktiv – die
+    /// sprachgesteuerte Gegenseite. Wird das vom Sprachablauf selbst
+    /// aufgerufen, ist das Abbrechen ein No-Op (der Task ist ja gerade dabei,
+    /// sich selbst zu beenden); gewinnt stattdessen ein manueller Button,
+    /// stoppt es zuverlässig den sonst verwaist weiterlaufenden Sprach-Task.
     private func resolveNextStep(_ subfolder: Subfolder?) {
         nextStepContinuation?.resume(returning: subfolder)
         nextStepContinuation = nil
+        pendingContinueTask?.cancel()
+        pendingContinueTask = nil
     }
 
     /// Zählt (in der Reihenfolge TTS_2 beschreibt) alle Unterordner auf,
@@ -454,6 +471,19 @@ struct HandsFreeStudyView: View {
     private func stopEverything() {
         speech.stop()
         if recorder.isRecording { _ = recorder.stopRecording() }
+        // Verwaisten Sprach-Task beenden, statt ihn im Hintergrund weiter TTS/
+        // Mikrofon benutzen zu lassen, obwohl der Modus gerade verlassen wird
+        // ("Beenden"-Button, Zurück-Navigation via .onDisappear).
+        pendingContinueTask?.cancel()
+        pendingContinueTask = nil
+        // Offene Continuations nicht verwaist lassen (sonst nur eine
+        // Konsolen-Warnung, aber sauberer, sie definiert aufzulösen).
+        nextStepContinuation?.resume(returning: nil)
+        nextStepContinuation = nil
+        subfolderPickerContinuation?.resume(returning: nil)
+        subfolderPickerContinuation = nil
+        yesNoContinuation?.resume(returning: false)
+        yesNoContinuation = nil
     }
 
     private func stopEverythingAndClose() {

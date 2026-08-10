@@ -114,6 +114,13 @@ final class AudioRecorder: NSObject, ObservableObject {
             try? await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
             guard let recorder, recorder.isRecording else { break }
 
+            // Wenn der umgebende Task abgebrochen wurde (z.B. weil ein
+            // "Beenden"/"Anderen Unterordner wählen"-Button eine noch
+            // laufende Sprachschleife explizit gecancelt hat), sofort
+            // aufhören statt bis zur natürlichen Stille-/Timeout-Grenze
+            // weiterzuhören.
+            if Task.isCancelled { break }
+
             if manualStopRequested {
                 manualStopRequested = false
                 break
