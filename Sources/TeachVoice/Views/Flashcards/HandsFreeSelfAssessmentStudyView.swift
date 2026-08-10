@@ -208,8 +208,9 @@ struct HandsFreeSelfAssessmentStudyView: View {
             let richtig = sessionResults.filter { $0.label == "Richtig" }.count
             let teilweise = sessionResults.filter { $0.label == "Teilweise richtig" }.count
             let falsch = sessionResults.count - richtig - teilweise
-            let summary = "Du hast das Deck vollständig gelernt und davon \(richtig) Fragen richtig, "
-                + "\(teilweise) Fragen teilweise richtig und \(falsch) falsch beantwortet."
+            let statsClause = StudySessionSummarySpeech.statsClause(richtig: richtig, teilweise: teilweise, falsch: falsch)
+            let summary = statsClause.map { "Du hast das Deck vollständig gelernt und davon \($0) beantwortet." }
+                ?? "Du hast das Deck vollständig gelernt."
             await speech.speakAndWait(summary)
         }
     }
