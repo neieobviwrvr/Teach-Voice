@@ -35,6 +35,14 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
+      # Temporärer Diagnose-Schritt: der Test-Host-Fehler ("Could not find
+      # test host") tritt trotz des dokumentierten scheme.testTargets-Wegs
+      # weiterhin auf – bevor ein weiteres Mal blind an project.yml gedreht
+      # wird, erstmal ansehen, was XcodeGen tatsächlich generiert hat.
+      - name: Debug - print generated scheme
+        run: |
+          find TeachVoice.xcodeproj -iname "*.xcscheme" -exec echo "--- {} ---" \; -exec cat {} \;
+
       - name: Resolve Swift Package dependencies
         run: xcodebuild -resolvePackageDependencies -project TeachVoice.xcodeproj
 
