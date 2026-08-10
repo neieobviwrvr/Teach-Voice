@@ -29,8 +29,14 @@ final class SpeechService: NSObject, ObservableObject {
     func speakAndWait(_ text: String, languageHint: String? = nil) async {
         guard !text.isEmpty else { return }
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            pendingContinuation = continuation
+            // Reihenfolge wichtig: speak() ruft intern stop() auf, das einen
+            // ggf. noch offenen pendingContinuation sofort auflöst. Würde man
+            // die neue Continuation VOR speak() setzen, würde genau dieser
+            // stop()-Aufruf sie sofort wieder auflösen, bevor die Ansage
+            // überhaupt begonnen hat – speakAndWait kehrte dann quasi sofort
+            // zurück statt wirklich auf das Ende der Sprachausgabe zu warten.
             speak(text, languageHint: languageHint)
+            pendingContinuation = continuation
         }
     }
 
