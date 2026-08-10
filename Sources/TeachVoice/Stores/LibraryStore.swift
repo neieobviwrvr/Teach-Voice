@@ -200,4 +200,26 @@ final class LibraryStore: ObservableObject {
             print("Kernelemente-Cache konnte nicht gespeichert werden: \(error.localizedDescription)")
         }
     }
+
+    /// Verbucht ein Lernergebnis im Spaced-Repetition-Box-System und
+    /// persistiert die neue Stufe + Fälligkeit. `urteil` ist bereits die
+    /// aufgelöste Signalquelle (Selbsteinschätzung im Detail-Modus, GPT-Mapping
+    /// im Hands-free-Modus) – die Priorisierung passiert beim Aufrufer.
+    @discardableResult
+    func recordSpacedRepetitionOutcome(for flashcard: Flashcard, urteil: GradingResult.Urteil) async -> Flashcard? {
+        let outcome = SpacedRepetition.nextState(currentBox: flashcard.srsBox, urteil: urteil)
+        do {
+            let updated = try await repository.updateFlashcardSRS(
+                id: flashcard.id, box: outcome.newBox, dueAt: outcome.dueAt, lastReviewedAt: Date()
+            )
+            if var list = flashcards[flashcard.subfolderId], let idx = list.firstIndex(where: { $0.id == flashcard.id }) {
+                list[idx] = updated
+                flashcards[flashcard.subfolderId] = list
+            }
+            return updated
+        } catch {
+            print("Spaced-Repetition-Update fehlgeschlagen: \(error.localizedDescription)")
+            return nil
+        }
+    }
 }

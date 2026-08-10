@@ -1,8 +1,8 @@
 import SwiftUI
 
 struct StudyView: View {
-    let subfolder: Subfolder
-    let cards: [Flashcard]
+    @State private var subfolder: Subfolder
+    @State private var cards: [Flashcard]
 
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: LibraryStore
@@ -22,9 +22,17 @@ struct StudyView: View {
     @State private var gradingError: String?
     /// Der User hat immer das letzte Wort: die KI-Bewertung ist nur eine
     /// Einschätzung/Hilfestellung, vorbelegt mit ihrem Urteil, aber frei
-    /// überschreibbar. Noch nicht persistiert – reine In-Session-Bestätigung,
-    /// bis es eine Fortschritts-/Wiederholungs-Funktion gibt, die das braucht.
+    /// überschreibbar – und ist zugleich das Signal für die Spaced-Repetition-
+    /// Planung dieser Karte (siehe `SpacedRepetition`).
     @State private var selfAssessment: GradingResult.Urteil?
+    @State private var sessionResults: [SessionResultEntry] = []
+    @State private var showSubfolderPicker = false
+    @State private var subfolderOptions: [Subfolder] = []
+
+    init(subfolder: Subfolder, cards: [Flashcard]) {
+        _subfolder = State(initialValue: subfolder)
+        _cards = State(initialValue: cards)
+    }
 
     private var currentCard: Flashcard? {
         cards.indices.contains(index) ? cards[index] : nil
@@ -99,12 +107,16 @@ struct StudyView: View {
                         || (index >= cards.count - 1 && transcribedAnswer == nil)
                     )
                 } else {
-                    ContentUnavailableView("Fertig!", systemImage: "checkmark.seal.fill", description: Text("Du hast alle Karten in diesem Unterordner durchgesprochen."))
+                    SessionSummaryView(
+                        results: sessionResults,
+                        onRepeatSame: { restartSession() },
+                        onPickDifferentSubfolder: { Task { await loadSubfolderOptions() } }
+                    )
                 }
             }
             .padding()
         }
-        .navigationTitle("Lernmodus")
+        .navigationTitle(subfolder.name)
         .navigationBarTitleDisplayMode(.inline)
         // Zwei getrennte .task-Modifier statt einem: die Frage soll sofort
         // vorgelesen werden, unabhängig davon, wie lange die (einmalige,
@@ -119,6 +131,14 @@ struct StudyView: View {
             Button("Später", role: .cancel) {}
         } message: {
             Text("Ohne Mikrofonzugriff kann deine gesprochene Antwort nicht aufgenommen werden.")
+        }
+        .confirmationDialog("Unterordner wählen", isPresented: $showSubfolderPicker, titleVisibility: .visible) {
+            ForEach(subfolderOptions) { option in
+                Button(option.name) {
+                    Task { await switchTo(subfolder: option) }
+                }
+            }
+            Button("Abbrechen", role: .cancel) {}
         }
     }
 
@@ -158,9 +178,9 @@ struct StudyView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
-                selfAssessmentButton(.falsch, label: "Falsch\n(nicht gewusst)")
-                selfAssessmentButton(.teilweise, label: "Teilweise richtig\n(fast gewusst)")
-                selfAssessmentButton(.richtig, label: "Richtig\n(gewusst)")
+                selfAssessmentButton(.falsch, label: "Falsch\n(nicht gewusst)", card: card, result: result)
+                selfAssessmentButton(.teilweise, label: "Teilweise richtig\n(fast gewusst)", card: card, result: result)
+                selfAssessmentButton(.richtig, label: "Richtig\n(gewusst)", card: card, result: result)
             }
         }
         .padding()
@@ -168,15 +188,22 @@ struct StudyView: View {
         .background(verdictColor(result.urteil).opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
     }
 
-    /// Ein Selbsteinschätzungs-Button. Die KI-Bewertung dient nur als
-    /// Vorschlag (vorbelegt in `gradeCurrentAnswer`), aber ein Tap ist hier
-    /// zugleich die finale Einschätzung UND navigiert direkt weiter zur
-    /// nächsten Karte – genau wie der "Nächste Karte"-Button, nur in einem
-    /// Schritt statt zwei.
-    private func selfAssessmentButton(_ urteil: GradingResult.Urteil, label: String) -> some View {
+    /// Ein Selbsteinschätzungs-Button. Ein Tap ist zugleich die finale
+    /// Einschätzung (maßgeblich für die Spaced-Repetition-Planung dieser
+    /// Karte), löst das entsprechende haptische Feedback aus, trägt das
+    /// Ergebnis in die End-Screen-Statistik ein UND navigiert direkt weiter.
+    private func selfAssessmentButton(_ urteil: GradingResult.Urteil, label: String, card: Flashcard, result: GradingResult) -> some View {
         let isSelected = selfAssessment == urteil
         return Button {
             selfAssessment = urteil
+            HapticFeedback.play(for: urteil)
+            sessionResults.append(SessionResultEntry(
+                question: card.question,
+                isCorrect: urteil == .richtig,
+                label: verdictLabel(urteil),
+                percent: result.deckungProzent
+            ))
+            Task { await library.recordSpacedRepetitionOutcome(for: card, urteil: urteil) }
             nextCard()
         } label: {
             Text(label)
@@ -316,5 +343,42 @@ struct StudyView: View {
         if let card = currentCard {
             speech.speak(card.question)
         }
+    }
+
+    private func restartSession() {
+        index = 0
+        sessionResults = []
+        transcribedAnswer = nil
+        gradingResult = nil
+        gradingError = nil
+        selfAssessment = nil
+        if let card = currentCard {
+            speech.speak(card.question)
+        }
+    }
+
+    private func loadSubfolderOptions() async {
+        var options: [Subfolder] = []
+        if library.folders.isEmpty { await library.loadFolders() }
+        for folder in library.folders {
+            if library.subfolders(in: folder).isEmpty { await library.loadSubfolders(for: folder) }
+            options.append(contentsOf: library.subfolders(in: folder))
+        }
+        subfolderOptions = options
+        showSubfolderPicker = true
+    }
+
+    private func switchTo(subfolder newSubfolder: Subfolder) async {
+        if library.flashcards(in: newSubfolder).isEmpty {
+            await library.loadFlashcards(for: newSubfolder)
+        }
+        let newCards = library.flashcards(in: newSubfolder)
+        guard !newCards.isEmpty else {
+            library.errorMessage = "\"\(newSubfolder.name)\" hat noch keine Karteikarten."
+            return
+        }
+        subfolder = newSubfolder
+        cards = newCards
+        restartSession()
     }
 }

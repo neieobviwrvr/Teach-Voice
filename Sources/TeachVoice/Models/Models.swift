@@ -52,6 +52,13 @@ struct Flashcard: Codable, Identifiable, Hashable {
     var kernelemente: [String]? = nil
     var kernelementeSourceHash: String? = nil
 
+    /// Spaced-Repetition-Zustand (5-Stufen-Box-System, siehe `SpacedRepetition`).
+    /// `srsDueAt == nil` bedeutet "noch nie bewertet" – solche Karten werden im
+    /// Hands-free-Modus hinter allen bereits eingeplanten Karten einsortiert.
+    var srsBox: Int = 1
+    var srsDueAt: Date? = nil
+    var srsLastReviewedAt: Date? = nil
+
     enum CodingKeys: String, CodingKey {
         case id, question, answer, position, kernelemente
         case subfolderId = "subfolder_id"
@@ -59,6 +66,9 @@ struct Flashcard: Codable, Identifiable, Hashable {
         case createdAt = "created_at"
         case updatedAt = "updated_at"
         case kernelementeSourceHash = "kernelemente_source_hash"
+        case srsBox = "srs_box"
+        case srsDueAt = "srs_due_at"
+        case srsLastReviewedAt = "srs_last_reviewed_at"
     }
 }
 

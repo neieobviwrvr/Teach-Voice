@@ -10,7 +10,18 @@ iOS-App (SwiftUI) für sprachbasiertes Karteikarten-Lernen an der Uni:
 Zwei bewusst getrennte Modi, je nach Anwendungsfall:
 
 - **Detail** (Button in einem Unterordner): visuell, zeigt KI-Feedback (Deckung, fehlende Kernelemente, Musterantwort) und lässt dich am Ende per Buttons selbst einschätzen (richtig/teilweise/falsch) – die KI-Einschätzung ist nur ein vorbelegter Vorschlag.
-- **Hands-free** (Button auf dem Homescreen): rein audio-getrieben über alle Karten aller Unterordner hinweg. Frage wird vorgelesen → nach 1,5s öffnet sich automatisch das Mikrofon → Aufnahme endet nach 5s Stille (kürzere Sprechpausen zählen nicht) → automatische Transkription + Bewertung → kurzer Erfolgs-/Fehler-Ton (kein gesprochenes Feedback) → nächste Frage, bis zum Ende. Kein Antippen nötig außer optional zum Abbrechen. Nutzt eine eigene, großzügigere 50%-Schwelle für richtig/falsch (statt der 65%/40%-Dreistufigkeit im Detail-Modus), da hier binär entschieden werden muss.
+- **Hands-free** (Button auf dem Homescreen → Pop-up mit allen Unterordnern + "Alle Unterordner"-Option inkl. Kartenanzahl): rein audio-getrieben. Frage wird vorgelesen → nach 1,5s öffnet sich automatisch das Mikrofon → Aufnahme endet nach 5s Stille (Schwelle passt sich an die Umgebungslautstärke an) oder per "Lösung abgeben"-Fallback-Button → automatische Transkription + Bewertung → kurzer Ton + haptischer Puls (2x bei richtig, 1x bei falsch) → nächste Frage. Kein Antippen nötig außer optional zum Abbrechen. Nutzt eine eigene 50%-Schwelle nur für das unmittelbare Ton-Feedback (getrennt von der 65%/45%-Schwelle für die Spaced-Repetition-Einordnung).
+
+Beide Modi enden mit einem **Statistik-Screen** (X von Y richtig, aufklappbare Detailliste pro Karte) und den Optionen "Unterordner wiederholen" oder "Anderen Unterordner wählen".
+
+## Spaced Repetition
+
+Einfaches 5-Stufen-Box-System (`Core/SpacedRepetition.swift`), Intervalle 0/1/3/7/14 Tage: richtig = eine Stufe hoch, teilweise = Stufe bleibt gleich, falsch = zurück auf Stufe 1. Signalquelle je Karte:
+
+- **Detail-Modus**: immer die Selbsteinschätzung des Users (maßgeblich, nicht die KI).
+- **Hands-free-Modus** (keine Selbsteinschätzung möglich): GPTs `deckung_prozent`, gemappt auf dasselbe 3-Stufen-Schema (≥65% richtig, 45–64% teilweise, <45% falsch).
+
+Der Hands-free-Modus sortiert Karten nach Fälligkeit (fällige/überfällige zuerst, dann nie bewertete, dann noch nicht fällige) – ausschließlich Reihenfolge, keine Karte wird ausgeschlossen. Der Detail-Modus bleibt unsortiert (Original-Reihenfolge).
 
 ## Struktur
 

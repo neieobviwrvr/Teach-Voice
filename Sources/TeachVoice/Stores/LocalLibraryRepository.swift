@@ -164,6 +164,17 @@ final class LocalLibraryRepository: LibraryRepository {
         return snapshot.flashcards[idx]
     }
 
+    func updateFlashcardSRS(id: UUID, box: Int, dueAt: Date, lastReviewedAt: Date) async throws -> Flashcard {
+        guard let idx = snapshot.flashcards.firstIndex(where: { $0.id == id }) else {
+            throw APIError.server(status: 404, message: "Karteikarte nicht gefunden.")
+        }
+        snapshot.flashcards[idx].srsBox = box
+        snapshot.flashcards[idx].srsDueAt = dueAt
+        snapshot.flashcards[idx].srsLastReviewedAt = lastReviewedAt
+        persist()
+        return snapshot.flashcards[idx]
+    }
+
     private static func order<T>(_ a: T, _ b: T) -> Bool where T: Positioned & Timestamped {
         a.position == b.position ? a.createdAt < b.createdAt : a.position < b.position
     }

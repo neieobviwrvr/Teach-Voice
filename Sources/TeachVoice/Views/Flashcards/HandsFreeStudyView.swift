@@ -3,16 +3,19 @@ import SwiftUI
 /// Rein audio-getriebener Lernmodus: Frage wird vorgelesen, nach kurzer Pause
 /// öffnet sich automatisch das Mikrofon, die Antwort wird aufgenommen bis der
 /// User ~5 Sekunden am Stück still ist (kürzere Pausen gelten als bloßes
-/// Nachdenken), automatisch transkribiert und bewertet – Ergebnis nur als
-/// kurzer Ton (kein gesprochenes Feedback), dann sofort die nächste Frage.
-/// Keine Buttons nötig außer optional zum vorzeitigen Beenden.
+/// Nachdenken), automatisch transkribiert und bewertet – Ergebnis als kurzer
+/// Ton + haptischer Puls (kein gesprochenes Feedback), dann sofort die
+/// nächste Frage. Keine Buttons nötig außer optional zum vorzeitigen Beenden
+/// bzw. zum manuellen Abgeben der Antwort.
 ///
 /// Bewusst getrennt vom "Detail"-Lernmodus (`StudyView`): dort entscheidet
 /// der User am Ende selbst (richtig/teilweise/falsch), hier automatisch per
 /// GPT-Bewertung, weil man währenddessen ja nicht hinschauen/tippen soll.
+/// Die Kartenreihenfolge folgt der Spaced-Repetition-Fälligkeit
+/// (`SpacedRepetition.ordered`), nicht der ursprünglichen Karten-Reihenfolge.
 struct HandsFreeStudyView: View {
-    let cards: [Flashcard]
-    var title: String = "Hands-free"
+    @State private var cards: [Flashcard]
+    @State private var title: String
 
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: LibraryStore
@@ -30,10 +33,19 @@ struct HandsFreeStudyView: View {
     /// "Lösung abgeben"-Fallback-Button für den Fall, dass die automatische
     /// Stille-Erkennung durch Umgebungslärm nicht zuverlässig auslöst.
     @State private var isListening = false
+    @State private var sessionResults: [SessionResultEntry] = []
+    @State private var showSubfolderPicker = false
+    @State private var subfolderOptions: [Subfolder] = []
 
-    /// Eigene, großzügigere Schwelle nur für diesen binären Modus (statt der
-    /// 65%/40%-Dreistufigkeit im Detail-Modus) – auf Wunsch bewusst bei 50%.
+    /// Eigene, großzügigere Schwelle nur für das unmittelbare Ton-Feedback
+    /// (statt der 65%/45%-Dreistufigkeit, die die Spaced-Repetition-Planung
+    /// nutzt) – auf Wunsch bewusst bei 50%.
     private let handsFreeCorrectThreshold: Double = 50
+
+    init(cards: [Flashcard], title: String = "Hands-free") {
+        _cards = State(initialValue: SpacedRepetition.ordered(cards))
+        _title = State(initialValue: title)
+    }
 
     private var currentCard: Flashcard? {
         cards.indices.contains(index) ? cards[index] : nil
@@ -81,13 +93,11 @@ struct HandsFreeStudyView: View {
                 }
                 .buttonStyle(.bordered)
             } else {
-                ContentUnavailableView(
-                    "Fertig!",
-                    systemImage: "checkmark.seal.fill",
-                    description: Text("Du hast alle \(cards.count) Karten durchgesprochen.")
+                SessionSummaryView(
+                    results: sessionResults,
+                    onRepeatSame: { restartSession() },
+                    onPickDifferentSubfolder: { Task { await loadSubfolderOptions() } }
                 )
-                Button("Schließen") { dismiss() }
-                    .buttonStyle(.borderedProminent)
             }
         }
         .padding()
@@ -101,6 +111,14 @@ struct HandsFreeStudyView: View {
             Button("Abbrechen", role: .cancel) { dismiss() }
         } message: {
             Text("Hands-free-Modus braucht Mikrofonzugriff, um deine Antworten zu erkennen.")
+        }
+        .confirmationDialog("Unterordner wählen", isPresented: $showSubfolderPicker, titleVisibility: .visible) {
+            ForEach(subfolderOptions) { option in
+                Button(option.name) {
+                    Task { await switchTo(subfolder: option) }
+                }
+            }
+            Button("Abbrechen", role: .cancel) {}
         }
     }
 
@@ -175,13 +193,34 @@ struct HandsFreeStudyView: View {
                 await library.cacheKernelemente(kernelemente, for: card, sourceHash: currentHash)
             }
 
+            // Keine Selbsteinschätzung möglich (hands-free!) -> GPTs Deckung
+            // ist die alleinige Signalquelle für die Spaced-Repetition-Planung,
+            // gemappt auf dasselbe 3-Stufen-Schema wie im Detail-Modus.
+            let srsUrteil = SpacedRepetition.urteil(fromDeckungProzent: result.deckungProzent)
+            Task { await library.recordSpacedRepetitionOutcome(for: card, urteil: srsUrteil) }
+
             let isCorrect = result.deckungProzent >= handsFreeCorrectThreshold
             lastVerdict = isCorrect
             statusText = isCorrect ? "Richtig!" : "Leider falsch."
+            HapticFeedback.play(for: isCorrect ? .richtig : .falsch)
             await soundPlayer.play(isCorrect ? .success : .failure)
+
+            sessionResults.append(SessionResultEntry(
+                question: card.question,
+                isCorrect: isCorrect,
+                label: isCorrect ? "Richtig" : "Falsch",
+                percent: result.deckungProzent
+            ))
         } catch {
             statusText = "Bewertung fehlgeschlagen."
+            HapticFeedback.play(for: .falsch)
             await soundPlayer.play(.failure)
+            sessionResults.append(SessionResultEntry(
+                question: card.question,
+                isCorrect: false,
+                label: "Fehler",
+                percent: 0
+            ))
         }
     }
 
@@ -193,5 +232,43 @@ struct HandsFreeStudyView: View {
     private func stopEverythingAndClose() {
         stopEverything()
         dismiss()
+    }
+
+    private func restartSession() {
+        cards = SpacedRepetition.ordered(cards)
+        index = 0
+        sessionResults = []
+        lastVerdict = nil
+        statusText = "Bereit…"
+        Task { await runLoop() }
+    }
+
+    private func loadSubfolderOptions() async {
+        var options: [Subfolder] = []
+        if library.folders.isEmpty { await library.loadFolders() }
+        for folder in library.folders {
+            if library.subfolders(in: folder).isEmpty { await library.loadSubfolders(for: folder) }
+            options.append(contentsOf: library.subfolders(in: folder))
+        }
+        subfolderOptions = options
+        showSubfolderPicker = true
+    }
+
+    private func switchTo(subfolder: Subfolder) async {
+        if library.flashcards(in: subfolder).isEmpty {
+            await library.loadFlashcards(for: subfolder)
+        }
+        let newCards = library.flashcards(in: subfolder)
+        guard !newCards.isEmpty else {
+            library.errorMessage = "\"\(subfolder.name)\" hat noch keine Karteikarten."
+            return
+        }
+        cards = SpacedRepetition.ordered(newCards)
+        title = subfolder.name
+        index = 0
+        sessionResults = []
+        lastVerdict = nil
+        statusText = "Bereit…"
+        Task { await runLoop() }
     }
 }

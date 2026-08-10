@@ -31,6 +31,16 @@ private struct GradingCachePatch: Encodable {
         case kernelementeSourceHash = "kernelemente_source_hash"
     }
 }
+private struct SRSPatch: Encodable {
+    let srsBox: Int
+    let srsDueAt: Date
+    let srsLastReviewedAt: Date
+    enum CodingKeys: String, CodingKey {
+        case srsBox = "srs_box"
+        case srsDueAt = "srs_due_at"
+        case srsLastReviewedAt = "srs_last_reviewed_at"
+    }
+}
 
 /// Speichert Ordner/Unterordner/Karteikarten in Supabase (Postgres via PostgREST),
 /// RLS-geschützt pro eingeloggtem User. Genutzt für den E-Mail/Passwort-Login.
@@ -162,6 +172,16 @@ final class RemoteLibraryRepository: LibraryRepository {
             table: "flashcards",
             id: id,
             body: GradingCachePatch(kernelemente: kernelemente, kernelementeSourceHash: sourceHash),
+            accessToken: ctx.token
+        )
+    }
+
+    func updateFlashcardSRS(id: UUID, box: Int, dueAt: Date, lastReviewedAt: Date) async throws -> Flashcard {
+        let ctx = try await context()
+        return try await SupabaseRestClient.update(
+            table: "flashcards",
+            id: id,
+            body: SRSPatch(srsBox: box, srsDueAt: dueAt, srsLastReviewedAt: lastReviewedAt),
             accessToken: ctx.token
         )
     }

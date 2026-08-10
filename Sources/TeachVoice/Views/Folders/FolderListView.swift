@@ -49,7 +49,7 @@ struct FolderListView: View {
                     }
                     .disabled(isLoadingHandsFree)
                 } footer: {
-                    Text("Fragt automatisch die Karten eines gewählten Unterordners ab – rein per Sprache, kein Antippen nötig.")
+                    Text("Fragt automatisch die Karten eines gewählten Unterordners (oder aller zusammen) ab – rein per Sprache, kein Antippen nötig.")
                 }
 
                 ForEach(library.folders) { folder in
@@ -177,9 +177,15 @@ struct FolderListView: View {
                 isPresented: $showHandsFreeSubfolderPicker,
                 titleVisibility: .visible
             ) {
+                if handsFreeSubfolderOptions.count > 1 {
+                    let totalCards = handsFreeSubfolderOptions.reduce(0) { $0 + library.flashcards(in: $1).count }
+                    Button("Alle Unterordner lernen (\(handsFreeSubfolderOptions.count) Unterordner, \(totalCards) Karten)") {
+                        Task { await startHandsFree(for: handsFreeSubfolderOptions, title: "Alle Unterordner") }
+                    }
+                }
                 ForEach(handsFreeSubfolderOptions) { subfolder in
-                    Button(subfolder.name) {
-                        Task { await startHandsFree(for: subfolder) }
+                    Button("\(subfolder.name) (\(library.flashcards(in: subfolder).count) Karten)") {
+                        Task { await startHandsFree(for: [subfolder], title: subfolder.name) }
                     }
                 }
                 Button("Abbrechen", role: .cancel) {}
@@ -188,15 +194,18 @@ struct FolderListView: View {
     }
 
     /// Lädt alle Unterordner über alle Ordner hinweg (praktisch: den einen
-    /// Ordner) und zeigt sie als Auswahl-Pop-up an, statt direkt loszulegen –
-    /// Hands-free läuft immer nur über die Karten EINES gewählten Unterordners.
+    /// Ordner) inkl. ihrer Karten (für die Kartenanzahl im Pop-up) und zeigt
+    /// sie als Auswahl an – einzeln oder als "Alle Unterordner"-Option.
     private func loadHandsFreeSubfolderOptions() async {
         isLoadingHandsFree = true
         if library.folders.isEmpty { await library.loadFolders() }
         var options: [Subfolder] = []
         for folder in library.folders {
             if library.subfolders(in: folder).isEmpty { await library.loadSubfolders(for: folder) }
-            options.append(contentsOf: library.subfolders(in: folder))
+            for subfolder in library.subfolders(in: folder) {
+                if library.flashcards(in: subfolder).isEmpty { await library.loadFlashcards(for: subfolder) }
+                options.append(subfolder)
+            }
         }
         isLoadingHandsFree = false
 
@@ -208,16 +217,13 @@ struct FolderListView: View {
         showHandsFreeSubfolderPicker = true
     }
 
-    private func startHandsFree(for subfolder: Subfolder) async {
-        if library.flashcards(in: subfolder).isEmpty {
-            await library.loadFlashcards(for: subfolder)
-        }
-        let cards = library.flashcards(in: subfolder)
+    private func startHandsFree(for subfolders: [Subfolder], title: String) async {
+        let cards = subfolders.flatMap { library.flashcards(in: $0) }
         guard !cards.isEmpty else {
-            library.errorMessage = "\"\(subfolder.name)\" hat noch keine Karteikarten."
+            library.errorMessage = "Keine Karteikarten vorhanden."
             return
         }
-        handsFreeTitle = subfolder.name
+        handsFreeTitle = title
         handsFreeCards = cards
     }
 }

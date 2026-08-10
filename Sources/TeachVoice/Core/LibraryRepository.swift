@@ -26,4 +26,7 @@ protocol LibraryRepository: AnyObject {
 
     /// Schreibt den Kernelemente-Cache für die STT-Bewertung fort (Lazy Caching).
     func updateFlashcardGradingCache(id: UUID, kernelemente: [String], sourceHash: String) async throws -> Flashcard
+
+    /// Schreibt den Spaced-Repetition-Zustand fort (Box + nächste Fälligkeit).
+    func updateFlashcardSRS(id: UUID, box: Int, dueAt: Date, lastReviewedAt: Date) async throws -> Flashcard
 }
