@@ -116,9 +116,25 @@ async function callOpenAI(prompt: string): Promise<string> {
 }
 
 async function extractKernelemente(question: string, answer: string): Promise<string[]> {
-  const prompt = `Du zerlegst die Musterantwort einer Uni-Karteikarte in atomare Kernelemente
-(eigenständige inhaltliche Aussagen). Eine einfache Definitionsantwort ergibt meist
-1 Element, eine Aufzählung mehrere – ein Element pro eigenständiger Aussage.
+  const prompt = `Du zerlegst die Musterantwort einer Uni-Karteikarte in Kernelemente – die
+zentralen inhaltlichen Aussagen, die eine gute Antwort abdecken sollte.
+
+WICHTIG zur Granularität (das ist der häufigste Fehler): Fasse eng zusammengehörige
+Gedanken zu EINEM Element zusammen, statt sie in Einzelteile zu zerlegen. Trenne nur,
+wenn ein Teil auch ohne den anderen für sich alleine eine eigenständige, unabhängig
+richtige oder falsche Aussage wäre – nicht schon, weil ein Satz mehrere Adjektive,
+Präzisierungen oder ein Beispiel zu EINEM Gedanken enthält. Im Zweifel lieber ein
+Element zu breit fassen als zu fein aufsplitten.
+
+Faustregel: eine kurze Definitionsantwort (1-2 Sätze) ergibt meist 1-2 Elemente,
+eine mehrteilige Erklärung oder echte Aufzählung entsprechend mehr.
+
+Beispiel: Frage "Was ist Working Memory?", Musterantwort "Working Memory ist ein
+kurzfristiges Speichersystem, das Informationen aktiv festhält und gleichzeitig
+verarbeitet, z.B. beim Kopfrechnen." → richtig sind 2 Elemente ("kurzfristiges
+Speichersystem, das Informationen aktiv festhält", "verarbeitet Informationen
+gleichzeitig, z.B. beim Kopfrechnen") – NICHT 4, indem "kurzfristig", "festhält",
+"verarbeitet" und das Beispiel einzeln aufgesplittet werden.
 
 Frage: ${question}
 Musterantwort: ${answer}
@@ -151,6 +167,15 @@ Wort im Transkript keinen Sinn ergibt, aber phonetisch klar erkennbar einem erwa
 Fachbegriff aus den Kernelementen ähnelt, zähle es trotzdem als korrekt getroffen – gehe
 im Zweifel davon aus, dass die/der Studierende das richtige Wort gesagt hat und nur die
 Spracherkennung es falsch verschriftlicht hat.
+
+Wichtig zur Großzügigkeit (das ist der häufigste Fehler): Ein Kernelement gilt bereits
+als GETROFFEN, wenn der zentrale Gedanke sinngemäß erkennbar ist – auch wenn die
+Formulierung stark von der Musterantwort abweicht (andere Worte, andere Reihenfolge,
+umgangssprachlich statt Fachbegriff), ein untergeordnetes Detail oder Beispiel fehlt,
+oder nur knapp statt ausführlich auf den Punkt eingegangen wird. Werte ein Element nur
+als FEHLEND, wenn der Kerngedanke selbst nicht erkennbar ist – nicht schon, weil ein
+einzelnes Fachwort oder Nebendetail fehlt. Bei einem Grenzfall zwischen "getroffen" und
+"nicht getroffen" entscheide GROSSZÜGIG zugunsten der/des Studierenden.
 
 Frage: ${question}
 
