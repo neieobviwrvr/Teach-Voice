@@ -31,7 +31,7 @@ Der Hands-free-Modus sortiert Karten nach Fälligkeit (fällige/überfällige zu
 ## Struktur
 
 - Ordner (Ober-Ordner, umbenennbar) → Unterordner (umbenennbar) → Karteikarten (Frage + Antwort, nachträglich bearbeitbar).
-- **Harte Limits für die Startphase** (ausdrücklich vorläufig, siehe `Models.swift`): max. **1 Ober-Ordner** pro Nutzer, max. **2 Unterordner** pro Ober-Ordner, max. **10 Karteikarten** pro Unterordner. Jeweils per DB-Trigger (Cloud) und Repository-Check (Gastmodus) durchgesetzt, siehe `supabase/migrations/0003_tighter_limits.sql`.
+- **Harte Limits für die Startphase** (ausdrücklich vorläufig, siehe `Models.swift`): max. **1 Ober-Ordner** pro Nutzer, max. **2 Unterordner** pro Ober-Ordner, max. **25 Karteikarten** pro Unterordner (bis 0005 waren es 10 – angehoben, damit der PDF-Import genug Platz für generierte Fragen hat). Jeweils per DB-Trigger (Cloud) und Repository-Check (Gastmodus) durchgesetzt, siehe `supabase/migrations/0003_tighter_limits.sql` und `0005_raise_flashcard_limit.sql`.
 - Auth: **E-Mail + Passwort** (Supabase) **oder Gastzugang** (rein lokal, kein Konto, kein Server-Roundtrip).
   Sign in with Apple/Google folgt später (siehe Task #9) – aktuell bewusst nicht eingebaut.
 

@@ -60,6 +60,15 @@ final class AuthManager: ObservableObject {
 
     var isAuthenticated: Bool { session != nil }
 
+    /// Hartcodiert `false` für JEDEN Account – es gibt aktuell keine echte
+    /// Bezahlfunktion (kein In-App-Purchase, kein Apple-Developer-Konto, kein
+    /// App-Store-Vertrieb, siehe `supabase/migrations/0006_user_entitlements.sql`).
+    /// Die DB-Spalte `profiles.is_paid_user` existiert schon als vorbereiteter
+    /// Anknüpfungspunkt, wird aber bewusst noch nicht gelesen – reine
+    /// Datenstruktur-Vorbereitung, kein Zahlungs-Feature. Gatet aktuell nur die
+    /// PDF-Upload-Anzahl im PDF-Import (siehe `PDFImportView`).
+    var isPaidUser: Bool { false }
+
     /// Startet die App im Gastmodus: keine Registrierung, keine Cloud-Anbindung –
     /// Karteikarten werden ausschließlich lokal auf diesem Gerät gespeichert.
     func continueAsGuest() {

@@ -84,5 +84,8 @@ let maxFoldersPerUser = 1
 /// Maximale Anzahl Unterordner pro Ober-Ordner.
 let maxSubfoldersPerFolder = 2
 
-/// Maximale Anzahl Karteikarten pro Unterordner.
-let maxFlashcardsPerSubfolder = 10
+/// Maximale Anzahl Karteikarten pro Unterordner. Von 10 auf 25 angehoben, um
+/// den PDF-Import (`PDFImportView`) sinnvoll nutzbar zu machen – bis zu 25
+/// automatisch generierte Fragen sollen in einen Unterordner passen, siehe
+/// `supabase/migrations/0005_raise_flashcard_limit.sql`.
+let maxFlashcardsPerSubfolder = 25

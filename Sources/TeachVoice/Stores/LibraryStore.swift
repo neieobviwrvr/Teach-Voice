@@ -141,9 +141,9 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    /// Legt eine Karteikarte an. Gibt `false` zurück, wenn das 20er-Limit erreicht ist
-    /// (clientseitige Vorabprüfung für sofortiges UI-Feedback; im Cloud-Modus zusätzlich
-    /// hart per DB-Trigger, im Gastmodus hart im Repository selbst durchgesetzt).
+    /// Legt eine Karteikarte an. Gibt `false` zurück, wenn `maxFlashcardsPerSubfolder`
+    /// erreicht ist (clientseitige Vorabprüfung für sofortiges UI-Feedback; im Cloud-Modus
+    /// zusätzlich hart per DB-Trigger, im Gastmodus hart im Repository selbst durchgesetzt).
     @discardableResult
     func addFlashcard(question: String, answer: String, to subfolder: Subfolder) async -> Bool {
         guard flashcards(in: subfolder).count < maxFlashcardsPerSubfolder else {
