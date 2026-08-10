@@ -20,7 +20,10 @@ struct FolderListView: View {
     @State private var renameText = ""
     @State private var showMicPermissionNotice = false
     @State private var handsFreeCards: [Flashcard]?
+    @State private var handsFreeTitle = "Hands-free"
     @State private var isLoadingHandsFree = false
+    @State private var showHandsFreeSubfolderPicker = false
+    @State private var handsFreeSubfolderOptions: [Subfolder] = []
 
     private var isFull: Bool { library.folders.count >= maxFoldersPerUser }
 
@@ -37,7 +40,7 @@ struct FolderListView: View {
 
                 Section {
                     Button {
-                        Task { await startHandsFree() }
+                        Task { await loadHandsFreeSubfolderOptions() }
                     } label: {
                         Label(
                             isLoadingHandsFree ? "Lädt…" : "Hands-free lernen",
@@ -46,7 +49,7 @@ struct FolderListView: View {
                     }
                     .disabled(isLoadingHandsFree)
                 } footer: {
-                    Text("Fragt automatisch alle Karten über beide Unterordner hinweg ab – rein per Sprache, kein Antippen nötig.")
+                    Text("Fragt automatisch die Karten eines gewählten Unterordners ab – rein per Sprache, kein Antippen nötig.")
                 }
 
                 ForEach(library.folders) { folder in
@@ -86,7 +89,7 @@ struct FolderListView: View {
                 SubfolderListView(folder: folder)
             }
             .navigationDestination(item: $handsFreeCards) { cards in
-                HandsFreeStudyView(cards: cards)
+                HandsFreeStudyView(cards: cards, title: handsFreeTitle)
             }
             .navigationTitle("Meine Ordner")
             .toolbar {
@@ -169,18 +172,52 @@ struct FolderListView: View {
             } message: {
                 Text("Teach (Voice) funktioniert im Kern erst richtig, wenn du den Mikrofonzugriff erlaubst – ohne ihn kann deine gesprochene Antwort im Lernmodus nicht erkannt werden.")
             }
+            .confirmationDialog(
+                "Unterordner für Hands-free wählen",
+                isPresented: $showHandsFreeSubfolderPicker,
+                titleVisibility: .visible
+            ) {
+                ForEach(handsFreeSubfolderOptions) { subfolder in
+                    Button(subfolder.name) {
+                        Task { await startHandsFree(for: subfolder) }
+                    }
+                }
+                Button("Abbrechen", role: .cancel) {}
+            }
         }
     }
 
-    private func startHandsFree() async {
+    /// Lädt alle Unterordner über alle Ordner hinweg (praktisch: den einen
+    /// Ordner) und zeigt sie als Auswahl-Pop-up an, statt direkt loszulegen –
+    /// Hands-free läuft immer nur über die Karten EINES gewählten Unterordners.
+    private func loadHandsFreeSubfolderOptions() async {
         isLoadingHandsFree = true
-        let allCards = await library.loadAllFlashcardsAcrossFolders()
+        if library.folders.isEmpty { await library.loadFolders() }
+        var options: [Subfolder] = []
+        for folder in library.folders {
+            if library.subfolders(in: folder).isEmpty { await library.loadSubfolders(for: folder) }
+            options.append(contentsOf: library.subfolders(in: folder))
+        }
         isLoadingHandsFree = false
 
-        guard !allCards.isEmpty else {
-            library.errorMessage = "Keine Karteikarten vorhanden – lege zuerst welche an."
+        guard !options.isEmpty else {
+            library.errorMessage = "Keine Unterordner vorhanden – lege zuerst einen an."
             return
         }
-        handsFreeCards = allCards
+        handsFreeSubfolderOptions = options
+        showHandsFreeSubfolderPicker = true
+    }
+
+    private func startHandsFree(for subfolder: Subfolder) async {
+        if library.flashcards(in: subfolder).isEmpty {
+            await library.loadFlashcards(for: subfolder)
+        }
+        let cards = library.flashcards(in: subfolder)
+        guard !cards.isEmpty else {
+            library.errorMessage = "\"\(subfolder.name)\" hat noch keine Karteikarten."
+            return
+        }
+        handsFreeTitle = subfolder.name
+        handsFreeCards = cards
     }
 }

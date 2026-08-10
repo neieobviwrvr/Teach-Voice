@@ -12,6 +12,7 @@ import SwiftUI
 /// GPT-Bewertung, weil man währenddessen ja nicht hinschauen/tippen soll.
 struct HandsFreeStudyView: View {
     let cards: [Flashcard]
+    var title: String = "Hands-free"
 
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: LibraryStore
@@ -90,7 +91,7 @@ struct HandsFreeStudyView: View {
             }
         }
         .padding()
-        .navigationTitle("Hands-free")
+        .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
         .task { await transcriber.prepareIfNeeded() }
         .task { await runLoop() }
