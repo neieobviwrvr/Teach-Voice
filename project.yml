@@ -40,6 +40,14 @@ targets:
         CODE_SIGNING_REQUIRED: "NO"
         CODE_SIGNING_ALLOWED: "NO"
         ENABLE_BITCODE: "NO"
+    # Dokumentierter XcodeGen-Weg, um den Test-Ordner korrekt in das
+    # Scheme des App-Targets einzubinden (statt ein Scheme händisch nachzubauen,
+    # siehe die zwei fehlgeschlagenen CI-Läufe zuvor – TEST_HOST/BUNDLE_LOADER
+    # manuell zu setzen war der falsche Ansatz: ein App-Target (kein Framework)
+    # braucht für @testable import tatsächlich die Host-App-Kopplung).
+    scheme:
+      testTargets:
+        - TeachVoiceTests
     dependencies:
       - package: WhisperKit
         product: WhisperKit
@@ -55,27 +63,5 @@ targets:
         CODE_SIGN_STYLE: Manual
         CODE_SIGNING_REQUIRED: "NO"
         CODE_SIGNING_ALLOWED: "NO"
-        # Testet reine Logik (kein UI/App-Runtime-Zustand nötig) -> bewusst OHNE
-        # Host-App laufen lassen ("Host Application: None"), statt die App erst
-        # für den Simulator bauen+starten zu müssen, nur um @testable import zu
-        # nutzen. Ohne das erwartet Xcode einen TEST_HOST-Pfad zur .app, den es
-        # zum Testzeitpunkt noch nicht gibt -> "Could not find test host".
-        TEST_HOST: ""
-        BUNDLE_LOADER: ""
     dependencies:
       - target: TeachVoice
-
-schemes:
-  TeachVoice:
-    build:
-      targets:
-        TeachVoice: all
-        TeachVoiceTests: [test]
-    run:
-      config: Debug
-    test:
-      config: Debug
-      targets:
-        - TeachVoiceTests
-    archive:
-      config: Release
