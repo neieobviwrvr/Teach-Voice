@@ -35,14 +35,6 @@ jobs:
       - name: Generate Xcode project
         run: xcodegen generate
 
-      # Temporärer Diagnose-Schritt: der Test-Host-Fehler ("Could not find
-      # test host") tritt trotz des dokumentierten scheme.testTargets-Wegs
-      # weiterhin auf – bevor ein weiteres Mal blind an project.yml gedreht
-      # wird, erstmal ansehen, was XcodeGen tatsächlich generiert hat.
-      - name: Debug - print generated scheme
-        run: |
-          find TeachVoice.xcodeproj -iname "*.xcscheme" -exec echo "--- {} ---" \; -exec cat {} \;
-
       - name: Resolve Swift Package dependencies
         run: xcodebuild -resolvePackageDependencies -project TeachVoice.xcodeproj
 
@@ -70,12 +62,28 @@ jobs:
           echo "udid=$UDID" >> "$GITHUB_OUTPUT"
           echo "Selected simulator UDID: $UDID"
 
+      # Bewusst als ZWEI getrennte Schritte statt einem kombinierten
+      # "xcodebuild test": das generierte Scheme (siehe CI-Historie) führte
+      # mit dem kombinierten Befehl zu "Could not find test host", vermutlich
+      # weil TEST_HOST geprüft wurde, bevor die App fürs Testen fertig gebaut
+      # war. Erst vollständig für den Simulator bauen (App + Test-Bundle),
+      # DANACH gegen die schon vorhandenen Build-Produkte testen – das ist
+      # auch der von Apple für CI empfohlene, robustere Weg.
+      - name: Build for testing
+        run: |
+          xcodebuild build-for-testing \
+            -project TeachVoice.xcodeproj \
+            -scheme TeachVoice \
+            -destination "id=${{ steps.simulator.outputs.udid }}" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO
+
       # Läuft VOR dem Archiv-Build und bricht den Workflow bei Fehlschlag
       # sofort ab (Standard-GitHub-Actions-Verhalten) – kein Sinn, eine IPA
       # zu bauen, wenn schon die Kernlogik-Tests rot sind.
       - name: Run unit tests
         run: |
-          xcodebuild test \
+          xcodebuild test-without-building \
             -project TeachVoice.xcodeproj \
             -scheme TeachVoice \
             -destination "id=${{ steps.simulator.outputs.udid }}" \
