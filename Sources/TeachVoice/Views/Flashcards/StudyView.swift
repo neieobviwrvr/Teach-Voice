@@ -158,9 +158,9 @@ struct StudyView: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
-                selfAssessmentButton(.richtig, label: "Richtig\n(gewusst)")
-                selfAssessmentButton(.teilweise, label: "Teilweise richtig\n(fast gewusst)")
                 selfAssessmentButton(.falsch, label: "Falsch\n(nicht gewusst)")
+                selfAssessmentButton(.teilweise, label: "Teilweise richtig\n(fast gewusst)")
+                selfAssessmentButton(.richtig, label: "Richtig\n(gewusst)")
             }
         }
         .padding()
@@ -169,13 +169,15 @@ struct StudyView: View {
     }
 
     /// Ein Selbsteinschätzungs-Button. Die KI-Bewertung dient nur als
-    /// Vorschlag (vorbelegt in `gradeCurrentAnswer`) – der User kann jederzeit
-    /// eine andere der drei Stufen wählen, das ist die eigentliche, finale
-    /// Einschätzung.
+    /// Vorschlag (vorbelegt in `gradeCurrentAnswer`), aber ein Tap ist hier
+    /// zugleich die finale Einschätzung UND navigiert direkt weiter zur
+    /// nächsten Karte – genau wie der "Nächste Karte"-Button, nur in einem
+    /// Schritt statt zwei.
     private func selfAssessmentButton(_ urteil: GradingResult.Urteil, label: String) -> some View {
         let isSelected = selfAssessment == urteil
         return Button {
             selfAssessment = urteil
+            nextCard()
         } label: {
             Text(label)
                 .font(.caption2)
