@@ -9,11 +9,54 @@ struct SubfolderListView: View {
     @State private var newSubfolderName = ""
     @State private var renamingSubfolder: Subfolder?
     @State private var renameText = ""
-
-    private var isFull: Bool { library.subfolders(in: folder).count >= maxSubfoldersPerFolder }
+    @State private var showPDFImport = false
 
     var body: some View {
         List {
+            // Bewusst zentriert statt oben rechts im Toolbar (Simons
+            // Entscheidung) – der Haupt-Einstiegspunkt für neue Unterordner,
+            // sowohl manuell als auch per PDF-Import, der jetzt hier statt in
+            // FlashcardListView lebt (er erstellt einen KOMPLETTEN neuen
+            // Unterordner samt Karten, statt Karten in einen bestehenden
+            // einzufügen).
+            Section {
+                HStack {
+                    Spacer()
+                    Menu {
+                        Button {
+                            showAddSubfolder = true
+                        } label: {
+                            Label("Manuell erstellen", systemImage: "folder.badge.plus")
+                        }
+                        Button {
+                            showPDFImport = true
+                        } label: {
+                            Label("Aus PDF erstellen", systemImage: "doc.text.magnifyingglass")
+                        }
+                    } label: {
+                        Image(systemName: "plus.circle.fill")
+                            .font(.system(size: 44))
+                    }
+                    Spacer()
+                }
+                .padding(.vertical, 8)
+                .listRowBackground(Color.clear)
+            }
+
+            // Als Zeile INNERHALB der Liste statt als `.overlay` – ein
+            // Overlay würde den zentrierten Plus-Button oben sonst
+            // mitverdecken, statt nur "kein Inhalt" zu signalisieren.
+            if library.subfolders(in: folder).isEmpty {
+                Section {
+                    ContentUnavailableView(
+                        "Noch keine Unterordner",
+                        systemImage: "folder.badge.plus",
+                        description: Text("Tippe oben auf das Plus, um manuell oder per PDF-Import einen Unterordner anzulegen.")
+                    )
+                    .listRowBackground(Color.clear)
+                }
+            }
+
             ForEach(library.subfolders(in: folder)) { subfolder in
                 NavigationLink(value: subfolder) {
                     VStack(alignment: .leading) {
@@ -56,25 +99,6 @@ struct SubfolderListView: View {
             FlashcardListView(subfolder: subfolder)
         }
         .navigationTitle(folder.name)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    showAddSubfolder = true
-                } label: {
-                    Label("Unterordner hinzufügen", systemImage: "plus")
-                }
-                .disabled(isFull)
-            }
-        }
-        .overlay {
-            if library.subfolders(in: folder).isEmpty {
-                ContentUnavailableView(
-                    "Noch keine Unterordner",
-                    systemImage: "folder.badge.plus",
-                    description: Text("Erstelle kostenfrei einen Unterordner für dein nächstes Thema.")
-                )
-            }
-        }
         .task { await library.loadSubfolders(for: folder) }
         .refreshable { await library.loadSubfolders(for: folder) }
         .alert("Neuer Unterordner", isPresented: $showAddSubfolder) {
@@ -102,6 +126,9 @@ struct SubfolderListView: View {
                 }
                 renamingSubfolder = nil
             }
+        }
+        .sheet(isPresented: $showPDFImport) {
+            PDFImportView(folder: folder)
         }
     }
 }

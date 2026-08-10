@@ -5,7 +5,6 @@ struct FlashcardListView: View {
 
     @EnvironmentObject private var library: LibraryStore
     @State private var showAddCard = false
-    @State private var showPDFImport = false
     @State private var editingCard: Flashcard?
     @State private var showStrictnessPicker = false
     @State private var pendingStrictness: GradingStrictness?
@@ -76,17 +75,8 @@ struct FlashcardListView: View {
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Menu {
-                    Button {
-                        showAddCard = true
-                    } label: {
-                        Label("Manuell erstellen", systemImage: "square.and.pencil")
-                    }
-                    Button {
-                        showPDFImport = true
-                    } label: {
-                        Label("Aus PDF erstellen", systemImage: "doc.text.magnifyingglass")
-                    }
+                Button {
+                    showAddCard = true
                 } label: {
                     Label("Karteikarte hinzufügen", systemImage: "plus")
                 }
@@ -113,9 +103,6 @@ struct FlashcardListView: View {
             AddFlashcardSheet(editing: card) { question, answer in
                 await library.updateFlashcard(card, question: question, answer: answer)
             }
-        }
-        .sheet(isPresented: $showPDFImport) {
-            PDFImportView(subfolder: subfolder)
         }
     }
 }

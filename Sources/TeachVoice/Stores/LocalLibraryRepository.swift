@@ -89,10 +89,10 @@ final class LocalLibraryRepository: LibraryRepository {
     }
 
     func insertSubfolder(name: String, folderId: UUID) async throws -> Subfolder {
+        // Unterordner selbst sind unbegrenzt (siehe Models.swift) – begrenzend
+        // ist nur noch die Gesamt-Kartenzahl pro Ordner, geprüft erst bei
+        // insertFlashcard, nicht hier.
         let position = snapshot.subfolders.filter { $0.folderId == folderId }.count
-        guard position < maxSubfoldersPerFolder else {
-            throw APIError.server(status: 400, message: "Maximal \(maxSubfoldersPerFolder) Unterordner pro Ordner erlaubt.")
-        }
         let subfolder = Subfolder(
             id: UUID(), folderId: folderId, userId: userId, name: name, position: position,
             createdAt: Date(), updatedAt: Date()
@@ -128,6 +128,17 @@ final class LocalLibraryRepository: LibraryRepository {
         let count = snapshot.flashcards.filter { $0.subfolderId == subfolderId }.count
         guard count < maxFlashcardsPerSubfolder else {
             throw APIError.server(status: 400, message: "Maximal \(maxFlashcardsPerSubfolder) Karteikarten pro Unterordner.")
+        }
+        // Neue Gesamt-Obergrenze über ALLE Unterordner desselben Ober-Ordners
+        // hinweg (siehe Models.swift/0007_unlimited_subfolders.sql) – der
+        // Gastmodus hat die komplette Snapshot immer lokal vorliegen, kann
+        // die also exakt (nicht nur best-effort) prüfen.
+        if let targetSubfolder = snapshot.subfolders.first(where: { $0.id == subfolderId }) {
+            let siblingIds = Set(snapshot.subfolders.filter { $0.folderId == targetSubfolder.folderId }.map(\.id))
+            let folderTotal = snapshot.flashcards.filter { siblingIds.contains($0.subfolderId) }.count
+            guard folderTotal < maxFlashcardsPerFolder else {
+                throw APIError.server(status: 400, message: "Maximal \(maxFlashcardsPerFolder) Karteikarten pro Ordner (über alle Unterordner zusammen).")
+            }
         }
         let card = Flashcard(
             id: UUID(), subfolderId: subfolderId, userId: userId, question: question, answer: answer,

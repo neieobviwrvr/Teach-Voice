@@ -5,13 +5,15 @@ import UniformTypeIdentifiers
 /// `AuthManager.isPaidUser`) auswählen -> Text wird on-device extrahiert
 /// (`PDFTextExtractor`, reiner Text, siehe dortige Doku zur Bild-Einschränkung)
 /// -> GPT generiert bis zu N Frage+Musterantwort-Vorschläge pro Datei ->
-/// User wählt per Checkbox aus, was tatsächlich als Karte angelegt wird.
+/// User wählt per Checkbox aus -> ein KOMPLETT NEUER Unterordner wird
+/// angelegt und mit den ausgewählten Karten gefüllt.
 ///
-/// Bewusst als eigener Screen statt in `AddFlashcardSheet` integriert: völlig
-/// anderer Ablauf (mehrstufig, asynchron, mit Zwischen-Review), keine
-/// sinnvolle gemeinsame View mit dem einfachen Erstellen-Formular.
+/// Bewusst auf Ebene des Ober-Ordners (ausgelöst von `SubfolderListView`,
+/// nicht mehr von `FlashcardListView`) – Simons explizite Entscheidung: PDF-
+/// Import erzeugt einen neuen Unterordner, statt Karten in einen
+/// bestehenden einzufügen.
 struct PDFImportView: View {
-    let subfolder: Subfolder
+    let folder: Folder
 
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var auth: AuthManager
@@ -19,17 +21,21 @@ struct PDFImportView: View {
 
     @State private var showFilePicker = false
     @State private var selectedURLs: [URL] = []
+    @State private var subfolderName = ""
     @State private var isProcessing = false
     @State private var processingStatus = ""
     @State private var hasGenerated = false
     @State private var candidates: [ReviewCandidate] = []
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @State private var isLoadingCapacity = true
+    /// Wird beim ersten Speichern-Tap gesetzt und danach wiederverwendet –
+    /// ein erneuter Tap nach einem Teil-Fehlschlag legt keinen zweiten,
+    /// leeren Unterordner an.
+    @State private var createdSubfolder: Subfolder?
 
     // Aktuell für jeden Account gleich – es gibt noch keine echte
-    // Bezahlfunktion (siehe AuthManager.isPaidUser). Hier ist bewusst schon
-    // der Anknüpfungspunkt für später vorbereitet, ohne eine erfundene
-    // Paid-Zahl festzulegen, die Simon noch nicht entschieden hat.
+    // Bezahlfunktion (siehe AuthManager.isPaidUser).
     private let maxPDFCount = 2
     private let maxFileSizeBytes = 50 * 1024 * 1024
 
@@ -40,8 +46,14 @@ struct PDFImportView: View {
         var isSelected = true
     }
 
-    private var existingCardCount: Int { library.flashcards(in: subfolder).count }
-    private var remainingCapacity: Int { max(0, maxFlashcardsPerSubfolder - existingCardCount) }
+    /// Wie viele Karten im GESAMTEN Ordner (über alle Unterordner) noch frei
+    /// sind – die eigentliche Bremse, seit Unterordner selbst unbegrenzt sind.
+    private var remainingFolderCapacity: Int {
+        max(0, maxFlashcardsPerFolder - library.totalFlashcardCount(in: folder))
+    }
+    /// Für einen neuen, leeren Unterordner ist die effektiv nutzbare Grenze
+    /// das Minimum aus Pro-Unterordner-Limit und Ordner-Restkapazität.
+    private var remainingCapacity: Int { min(maxFlashcardsPerSubfolder, remainingFolderCapacity) }
     private var selectedCount: Int { candidates.filter(\.isSelected).count }
 
     var body: some View {
@@ -53,15 +65,25 @@ struct PDFImportView: View {
                         .foregroundStyle(.red)
                         .padding()
                 }
-                currentPhase
+                if isLoadingCapacity {
+                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    currentPhase
+                }
             }
-            .navigationTitle("Aus PDF erstellen")
+            .navigationTitle("Unterordner aus PDF erstellen")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Abbrechen") { dismiss() }
                 }
             }
+        }
+        // Lädt Karten für ALLE Unterordner nach (nicht nur besuchte), damit
+        // die Ordner-Restkapazität von Anfang an korrekt angezeigt wird.
+        .task {
+            await library.loadAllFlashcards(for: folder)
+            isLoadingCapacity = false
         }
         .fileImporter(
             isPresented: $showFilePicker,
@@ -96,14 +118,14 @@ struct PDFImportView: View {
             Text("Bis zu \(maxPDFCount) PDFs auswählen (je max. 50MB)")
                 .font(.headline)
                 .multilineTextAlignment(.center)
-            Text("Nur Text wird ausgelesen – Diagramme/Bilder werden aktuell noch nicht berücksichtigt. In diesem Unterordner sind noch \(remainingCapacity) Plätze frei.")
+            Text("Nur Text wird ausgelesen – Diagramme/Bilder werden aktuell noch nicht berücksichtigt. In \"\(folder.name)\" sind insgesamt noch \(remainingFolderCapacity) von \(maxFlashcardsPerFolder) Karten-Plätzen frei (über alle Unterordner zusammen).")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
             Button("PDFs auswählen") { showFilePicker = true }
                 .buttonStyle(.borderedProminent)
-                .disabled(remainingCapacity == 0)
+                .disabled(remainingFolderCapacity == 0)
             Spacer()
         }
         .padding()
@@ -131,10 +153,13 @@ struct PDFImportView: View {
             }
             errorMessage = nil
             selectedURLs = urls
+            if subfolderName.isEmpty {
+                subfolderName = urls[0].deletingPathExtension().lastPathComponent
+            }
         }
     }
 
-    // MARK: - Phase 2: Anzahl wählen
+    // MARK: - Phase 2: Name + Anzahl wählen
 
     private var countSelectionSection: some View {
         VStack(spacing: 16) {
@@ -142,12 +167,20 @@ struct PDFImportView: View {
             ForEach(selectedURLs, id: \.self) { url in
                 Text(url.lastPathComponent).font(.footnote)
             }
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Name des neuen Unterordners").font(.caption).foregroundStyle(.secondary)
+                TextField("Name", text: $subfolderName)
+                    .textFieldStyle(.roundedBorder)
+            }
+            .padding(.horizontal)
+
             Spacer()
             Text("Wie viele Fragen sollen (pro Datei) generiert werden?")
                 .font(.headline)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
-            Text("GPT wählt eigenständig, wie viele davon inhaltlich wirklich eigenständig wichtig sind – das ist die Obergrenze, nicht garantiert die tatsächliche Zahl.")
+            Text("Maximal \(remainingCapacity) Karten passen in den neuen Unterordner (Ordner-Gesamtlimit \(maxFlashcardsPerFolder), Unterordner-Limit \(maxFlashcardsPerSubfolder)). GPT füllt nicht künstlich auf, wenn weniger wirklich wichtig ist.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -159,6 +192,8 @@ struct PDFImportView: View {
         }
         .padding()
     }
+
+    private var isNameValid: Bool { !subfolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
 
     private func countButton(label: String, subtitle: String, value: Int) -> some View {
         Button {
@@ -172,6 +207,7 @@ struct PDFImportView: View {
             .padding(.vertical, 8)
         }
         .buttonStyle(.bordered)
+        .disabled(!isNameValid || remainingCapacity == 0)
     }
 
     // MARK: - Phase 3: Verarbeitung
@@ -249,7 +285,7 @@ struct PDFImportView: View {
                             candidateRow($candidate)
                         }
                     } header: {
-                        Text("\(selectedCount) von \(candidates.count) ausgewählt — max. \(remainingCapacity) passen noch in diesen Unterordner")
+                        Text("\(selectedCount) von \(candidates.count) ausgewählt — max. \(remainingCapacity) passen in \"\(subfolderName)\"")
                     }
                 }
                 saveButton
@@ -282,7 +318,7 @@ struct PDFImportView: View {
             if isSaving {
                 ProgressView().frame(maxWidth: .infinity)
             } else {
-                Text("Ausgewählte speichern (\(selectedCount))").frame(maxWidth: .infinity)
+                Text("Unterordner \"\(subfolderName)\" mit \(selectedCount) Karten anlegen").frame(maxWidth: .infinity)
             }
         }
         .buttonStyle(.borderedProminent)
@@ -294,11 +330,16 @@ struct PDFImportView: View {
         isSaving = true
         errorMessage = nil
         Task {
+            guard let subfolder = await resolvedSubfolder() else {
+                isSaving = false
+                errorMessage = "Unterordner \"\(subfolderName)\" konnte nicht angelegt werden."
+                return
+            }
+
             // Nur erfolgreich gespeicherte Kandidaten werden aus der Liste
-            // entfernt – nicht ausgewählte UND fehlgeschlagene bleiben stehen.
-            // Damit legt ein erneuter Tap auf "Speichern" nach einem
-            // Teil-Fehlschlag nichts doppelt an, und der User sieht genau, was
-            // (noch) fehlt, statt dass Karten lautlos verschwinden.
+            // entfernt – siehe Kommentar in resolvedSubfolder(): ein erneuter
+            // Tap nach Teil-Fehlschlag legt weder den Unterordner noch
+            // bereits gespeicherte Karten doppelt an.
             var remaining: [ReviewCandidate] = []
             var failedCount = 0
 
@@ -320,10 +361,19 @@ struct PDFImportView: View {
             isSaving = false
 
             if failedCount > 0 {
-                errorMessage = "\(failedCount) Karte(n) konnten nicht gespeichert werden (z.B. weil der Unterordner voll wurde). Die übrigen wurden angelegt."
+                errorMessage = "\(failedCount) Karte(n) konnten nicht gespeichert werden (z.B. weil das Ordner-Gesamtlimit erreicht wurde). Die übrigen wurden im neuen Unterordner \"\(subfolderName)\" angelegt."
             } else {
                 dismiss()
             }
         }
+    }
+
+    private func resolvedSubfolder() async -> Subfolder? {
+        if let createdSubfolder { return createdSubfolder }
+        let name = subfolderName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return nil }
+        let created = await library.addSubfolder(name: name, to: folder)
+        createdSubfolder = created
+        return created
     }
 }

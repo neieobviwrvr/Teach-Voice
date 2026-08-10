@@ -1,7 +1,12 @@
 import Foundation
 
 /// Rein lokaler Abgleich für die sprachgesteuerte Unterordner-Auswahl im
-/// Hands-free-Menü (keine GPT-Kosten/Latenz nötig bei max. 2 Unterordnern).
+/// Hands-free-Menü (keine GPT-Kosten/Latenz nötig). Unterordner sind seit
+/// 0007_unlimited_subfolders.sql nicht mehr auf 2 begrenzt – die Zahlwort-
+/// Tabelle unten deckt deshalb 1-20 ab statt nur 1-5. Bei SEHR vielen
+/// Unterordnern (zweistellig+) wird das Sprachmenü selbst unhandlich (jeden
+/// einzeln vorlesen, dann eine Nummer erraten) – das ist ein UX-Punkt, kein
+/// Bug in diesem Matcher, und noch nicht mit Simon abschließend geklärt.
 ///
 /// WICHTIG (explizite Vorgabe von Simon, siehe Memory
 /// `handsfree-voice-menu-folder-matching`): falls sich dieser lokale Abgleich
@@ -13,7 +18,22 @@ enum SubfolderVoiceMatcher {
         "2": 2, "zwei": 2, "zweite": 2, "zweiter": 2, "zweites": 2,
         "3": 3, "drei": 3, "dritte": 3, "dritter": 3, "drittes": 3,
         "4": 4, "vier": 4, "vierte": 4, "vierter": 4, "viertes": 4,
-        "5": 5, "fünf": 5, "fünfte": 5, "fünfter": 5, "fünftes": 5
+        "5": 5, "fünf": 5, "fünfte": 5, "fünfter": 5, "fünftes": 5,
+        "6": 6, "sechs": 6, "sechste": 6, "sechster": 6, "sechstes": 6,
+        "7": 7, "sieben": 7, "siebte": 7, "siebter": 7, "siebtes": 7,
+        "8": 8, "acht": 8, "achte": 8, "achter": 8, "achtes": 8,
+        "9": 9, "neun": 9, "neunte": 9, "neunter": 9, "neuntes": 9,
+        "10": 10, "zehn": 10, "zehnte": 10, "zehnter": 10, "zehntes": 10,
+        "11": 11, "elf": 11, "elfte": 11,
+        "12": 12, "zwölf": 12, "zwölfte": 12,
+        "13": 13, "dreizehn": 13, "dreizehnte": 13,
+        "14": 14, "vierzehn": 14, "vierzehnte": 14,
+        "15": 15, "fünfzehn": 15, "fünfzehnte": 15,
+        "16": 16, "sechzehn": 16, "sechzehnte": 16,
+        "17": 17, "siebzehn": 17, "siebzehnte": 17,
+        "18": 18, "achtzehn": 18, "achtzehnte": 18,
+        "19": 19, "neunzehn": 19, "neunzehnte": 19,
+        "20": 20, "zwanzig": 20, "zwanzigste": 20
     ]
 
     private static let yesWords = ["ja", "jep", "jo", "gerne", "klar", "genau", "yes", "jup"]

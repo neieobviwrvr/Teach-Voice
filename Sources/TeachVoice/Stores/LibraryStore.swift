@@ -31,6 +31,28 @@ final class LibraryStore: ObservableObject {
     func subfolders(in folder: Folder) -> [Subfolder] { subfolders[folder.id] ?? [] }
     func flashcards(in subfolder: Subfolder) -> [Flashcard] { flashcards[subfolder.id] ?? [] }
 
+    /// Summe der Karten über ALLE Unterordner eines Ordners – Grundlage für
+    /// `maxFlashcardsPerFolder`. Nur so genau wie die bereits geladenen
+    /// Karten (siehe `loadAllFlashcards`); Server/Repository bleiben die
+    /// eigentliche, exakte Durchsetzung.
+    func totalFlashcardCount(in folder: Folder) -> Int {
+        subfolders(in: folder).reduce(0) { $0 + flashcards(in: $1).count }
+    }
+
+    /// Lädt Karten für JEDEN Unterordner eines Ordners nach, nicht nur den
+    /// zuletzt besuchten – nötig, damit `totalFlashcardCount(in:)` vor einer
+    /// neuen Kartenerstellung (v.a. PDF-Import) wirklich vollständig ist,
+    /// statt Unterordner zu unterschlagen, die der User in dieser Sitzung
+    /// noch nicht geöffnet hat.
+    func loadAllFlashcards(for folder: Folder) async {
+        if subfolders(in: folder).isEmpty {
+            await loadSubfolders(for: folder)
+        }
+        for subfolder in subfolders(in: folder) where flashcards[subfolder.id] == nil {
+            await loadFlashcards(for: subfolder)
+        }
+    }
+
     // MARK: - Folders
 
     func loadFolders() async {
@@ -93,19 +115,19 @@ final class LibraryStore: ObservableObject {
         }
     }
 
+    /// Unterordner sind bewusst unbegrenzt – gibt den neu angelegten
+    /// Unterordner zurück (statt nur `Bool`), weil der PDF-Import
+    /// (`PDFImportView`) sofort danach Karten in genau diesen neuen
+    /// Unterordner schreiben muss.
     @discardableResult
-    func addSubfolder(name: String, to folder: Folder) async -> Bool {
-        guard subfolders(in: folder).count < maxSubfoldersPerFolder else {
-            errorMessage = "Maximal \(maxSubfoldersPerFolder) Unterordner pro Ordner erlaubt."
-            return false
-        }
+    func addSubfolder(name: String, to folder: Folder) async -> Subfolder? {
         do {
             let created = try await repository.insertSubfolder(name: name, folderId: folder.id)
             subfolders[folder.id, default: []].append(created)
-            return true
+            return created
         } catch {
             errorMessage = error.localizedDescription
-            return false
+            return nil
         }
     }
 
@@ -148,6 +170,11 @@ final class LibraryStore: ObservableObject {
     func addFlashcard(question: String, answer: String, to subfolder: Subfolder) async -> Bool {
         guard flashcards(in: subfolder).count < maxFlashcardsPerSubfolder else {
             errorMessage = "Maximal \(maxFlashcardsPerSubfolder) Karteikarten pro Unterordner."
+            return false
+        }
+        if let folder = folders.first(where: { $0.id == subfolder.folderId }),
+           totalFlashcardCount(in: folder) >= maxFlashcardsPerFolder {
+            errorMessage = "Maximal \(maxFlashcardsPerFolder) Karteikarten pro Ordner (über alle Unterordner zusammen)."
             return false
         }
         do {

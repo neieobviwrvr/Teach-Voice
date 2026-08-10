@@ -13,6 +13,14 @@ final class SubfolderVoiceMatcherTests: XCTestCase {
         XCTAssertEqual(SubfolderVoiceMatcher.match(transcript: "1", options: options)?.name, "Kapitel Eins")
     }
 
+    func testMatchesByNumberWordBeyondFive() {
+        // Regressionstest für die Erweiterung auf 1-20, nötig seit
+        // Unterordner unbegrenzt sind (0007_unlimited_subfolders.sql).
+        let options = (1...12).map { makeSubfolder(name: "Kapitel \($0)") }
+        XCTAssertEqual(SubfolderVoiceMatcher.match(transcript: "zwölf", options: options)?.name, "Kapitel 12")
+        XCTAssertEqual(SubfolderVoiceMatcher.match(transcript: "die neunte", options: options)?.name, "Kapitel 9")
+    }
+
     func testMatchesByNameSubstring() {
         let options = [makeSubfolder(name: "Kapitel Eins"), makeSubfolder(name: "Kapitel Zwei Vertiefung")]
         XCTAssertEqual(

@@ -73,19 +73,28 @@ struct Flashcard: Codable, Identifiable, Hashable {
 }
 
 // Harte Limits für die Startphase (siehe DB-Trigger enforce_folder_limit /
-// enforce_subfolder_limit / enforce_flashcard_limit in
-// supabase/migrations/0003_tighter_limits.sql) – bewusst als benannte
-// Konstanten statt verstreuter Zahlen, da Simon das ausdrücklich als
-// vorläufigen Startwert bezeichnet hat, nicht als endgültige Grenze.
+// enforce_flashcard_limit in supabase/migrations/0003_tighter_limits.sql,
+// 0005_raise_flashcard_limit.sql, 0007_unlimited_subfolders.sql) – bewusst
+// als benannte Konstanten statt verstreuter Zahlen, da Simon das ausdrücklich
+// als vorläufigen Startwert bezeichnet hat, nicht als endgültige Grenze.
 
 /// Maximale Anzahl Ober-Ordner pro Nutzer.
 let maxFoldersPerUser = 1
 
-/// Maximale Anzahl Unterordner pro Ober-Ordner.
-let maxSubfoldersPerFolder = 2
+/// Unterordner pro Ober-Ordner sind bewusst UNBEGRENZT (Simons Entscheidung,
+/// siehe 0007_unlimited_subfolders.sql) – begrenzend ist stattdessen
+/// ausschließlich `maxFlashcardsPerFolder` (Gesamtkarten über alle
+/// Unterordner eines Ordners hinweg). `maxSubfoldersPerFolder` existiert
+/// deshalb nicht mehr als Konstante.
 
 /// Maximale Anzahl Karteikarten pro Unterordner. Von 10 auf 25 angehoben, um
 /// den PDF-Import (`PDFImportView`) sinnvoll nutzbar zu machen – bis zu 25
 /// automatisch generierte Fragen sollen in einen Unterordner passen, siehe
 /// `supabase/migrations/0005_raise_flashcard_limit.sql`.
 let maxFlashcardsPerSubfolder = 25
+
+/// Maximale Anzahl Karteikarten pro Ober-Ordner, ÜBER ALLE Unterordner
+/// zusammen gerechnet (neu, siehe 0007_unlimited_subfolders.sql). Das ist die
+/// eigentliche Bremse, seit Unterordner selbst unbegrenzt sind – z.B. 2
+/// Unterordner mit je 25 Karten, oder 5 mit je 10, etc.
+let maxFlashcardsPerFolder = 50
