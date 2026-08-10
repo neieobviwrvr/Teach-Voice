@@ -7,12 +7,13 @@ iOS-App (SwiftUI) für sprachbasiertes Karteikarten-Lernen an der Uni:
 
 ## Lernmodi
 
-Zwei bewusst getrennte Modi, je nach Anwendungsfall:
+Drei bewusst getrennte Modi, je nach Anwendungsfall:
 
-- **Detail** (Button in einem Unterordner): visuell, zeigt KI-Feedback (Deckung, fehlende Kernelemente, Musterantwort) und lässt dich am Ende per Buttons selbst einschätzen (richtig/teilweise/falsch) – die KI-Einschätzung ist nur ein vorbelegter Vorschlag.
-- **Hands-free** (Button auf dem Homescreen → Pop-up mit allen Unterordnern + "Alle Unterordner"-Option inkl. Kartenanzahl): rein audio-getrieben. Frage wird vorgelesen → nach 1,5s öffnet sich automatisch das Mikrofon → Aufnahme endet nach 5s Stille (Schwelle passt sich an die Umgebungslautstärke an) oder per "Lösung abgeben"-Fallback-Button → automatische Transkription + Bewertung → kurzer Ton + haptischer Puls (2x bei richtig, 1x bei falsch) → nächste Frage. Kein Antippen nötig außer optional zum Abbrechen. Nutzt eine eigene 50%-Schwelle nur für das unmittelbare Ton-Feedback (getrennt von der 65%/45%-Schwelle für die Spaced-Repetition-Einordnung).
+- **Detail** (Button in einem Unterordner): visuell, zeigt KI-Feedback (Deckung, fehlende Kernelemente, Musterantwort) und lässt dich per Buttons selbst einschätzen (richtig/teilweise/falsch) – ein Tap navigiert direkt zur nächsten Karte. Die KI-Einschätzung ist nur ein vorbelegter Vorschlag.
+- **Hands-free (Voice only)** (Button auf dem Homescreen): komplett sprachgesteuertes Menü (`HandsFreeStudyView`) – die App fragt selbst per TTS, welchen Unterordner man lernen will, zählt alle Unterordner auf, hört per Mikrofon zu (lokaler Zahl-/Namensabgleich, kein GPT-Call, siehe Memory `handsfree-voice-menu-folder-matching`). Danach: Frage vorlesen → 1,5s Pause → Mikrofon öffnet automatisch → Aufnahme endet nach 5s Stille (passt sich an Umgebungslautstärke an) oder per "Lösung abgeben" → Transkription+Bewertung → Ton + Vibration (richtig/falsch; "teilweise" bekommt bewusst keinen Ton, nur 1s Extra-Stille) → 2,5s Pause → nächste Frage. Am Ende: Statistik wird **gleichzeitig vorgelesen und angezeigt**, Weiterlernen läuft per Ja/Nein-Sprachabfrage (mit Retry + sichtbarem Pop-up-Fallback bei Unklarheit); zusätzlich ein "Anderen Unterordner wählen"-Button und "Zurück zum Homescreen".
+- **Hands-free lernen (Eigenbewertung)** (zweiter Homescreen-Button, `HandsFreeSelfAssessmentStudyView`): Frage/Aufnahme laufen automatisch wie bei Voice-only, aber nach der Bewertung erscheinen die drei Selbsteinschätzungs-Buttons und die Schleife wartet auf einen Tap (kein Ton) – die Selbsteinschätzung ist das maßgebliche Spaced-Repetition-Signal. Unterordner-Auswahl und Rundenabschluss laufen bewusst über das **sichtbare Pop-up** (inkl. "Alle Unterordner lernen"-Option mit Kartenanzahl) statt über ein Sprachmenü, da man hier ohnehin pro Frage antippen muss; die Statistik wird trotzdem zusätzlich vorgelesen.
 
-Beide Modi enden mit einem **Statistik-Screen** (X von Y richtig, aufklappbare Detailliste pro Karte) und den Optionen "Unterordner wiederholen" oder "Anderen Unterordner wählen".
+Alle drei Modi enden mit einem **Statistik-Screen** (X von Y richtig, aufklappbare Detailliste pro Karte via `SessionSummaryView`).
 
 ## Bewertungs-Strenge (Normal / Tryhard)
 

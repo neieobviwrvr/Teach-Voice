@@ -15,8 +15,11 @@ struct SessionResultEntry: Identifiable {
 /// aufklappbare Detailliste pro Karte, und zwei Weiter-Optionen.
 struct SessionSummaryView: View {
     let results: [SessionResultEntry]
-    let onRepeatSame: () -> Void
-    let onPickDifferentSubfolder: () -> Void
+    /// `nil` blendet die Buttons komplett aus – für den "Voice only"-Modus,
+    /// wo die Statistik zwar sichtbar UND vorgelesen wird, das Weiterlernen
+    /// aber bewusst rein sprachgesteuert bleibt statt per Antippen.
+    var onRepeatSame: (() -> Void)? = nil
+    var onPickDifferentSubfolder: (() -> Void)? = nil
 
     @State private var showDetails = false
 
@@ -57,13 +60,19 @@ struct SessionSummaryView: View {
                     .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                 }
 
-                VStack(spacing: 10) {
-                    Button("Unterordner wiederholen") { onRepeatSame() }
-                        .buttonStyle(.borderedProminent)
-                        .frame(maxWidth: .infinity)
-                    Button("Anderen Unterordner wählen") { onPickDifferentSubfolder() }
-                        .buttonStyle(.bordered)
-                        .frame(maxWidth: .infinity)
+                if onRepeatSame != nil || onPickDifferentSubfolder != nil {
+                    VStack(spacing: 10) {
+                        if let onRepeatSame {
+                            Button("Unterordner wiederholen") { onRepeatSame() }
+                                .buttonStyle(.borderedProminent)
+                                .frame(maxWidth: .infinity)
+                        }
+                        if let onPickDifferentSubfolder {
+                            Button("Anderen Unterordner wählen") { onPickDifferentSubfolder() }
+                                .buttonStyle(.bordered)
+                                .frame(maxWidth: .infinity)
+                        }
+                    }
                 }
             }
             .padding()

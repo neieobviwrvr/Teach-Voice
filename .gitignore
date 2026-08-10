@@ -45,3 +45,7 @@ build_output/
 # Supabase CLI
 .supabase/
 supabase/.temp/
+
+# Simons private Konzept-/Planungsnotizen – Repo ist public, nicht ungefragt
+# mit-veröffentlichen (siehe CLAUDE.md-Historie).
+Konzipierungen (Simon)/
