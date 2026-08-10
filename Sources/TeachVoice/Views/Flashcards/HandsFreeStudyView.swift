@@ -42,6 +42,7 @@ struct HandsFreeStudyView: View {
     @State private var cardIndex = 0
     @State private var cardCount = 0
     @State private var lastVerdict: GradingResult.Urteil?
+    @State private var lastAnswer: String?
     @State private var isListening = false
 
     @State private var sessionResults: [SessionResultEntry] = []
@@ -102,6 +103,16 @@ struct HandsFreeStudyView: View {
                         .font(.system(size: 48))
                         .foregroundStyle(verdictColor(lastVerdict))
                         .transition(.opacity)
+                }
+
+                if let lastAnswer {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Musterantwort:").font(.caption).foregroundStyle(.secondary)
+                        Text(lastAnswer).font(.caption)
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                 }
 
                 Text(statusText)
@@ -231,10 +242,13 @@ struct HandsFreeStudyView: View {
     /// hört per Sprache zu, versucht bei Unklarheit einmal erneut, und
     /// fällt danach auf das sichtbare Pop-up zurück statt zu hängen.
     private func selectSubfolderViaVoice() async -> Subfolder? {
-        let listText = subfolders.enumerated()
-            .map { index, subfolder in "\(index + 1)) \(subfolder.name)" }
-            .joined(separator: ". ")
-        await speech.speakAndWait(listText)
+        // Jeder Unterordner als eigene Ansage statt eines langen Satzes –
+        // mit fester Pause dazwischen, damit die Namen nicht ineinander
+        // verschwimmen und man sie tatsächlich verstehen kann.
+        let announcements = subfolders.enumerated().map { index, subfolder in
+            "\(index + 1)) \(subfolder.name)"
+        }
+        await speech.speakSequenceAndWait(announcements, pauseBetween: 0.5)
         if Task.isCancelled { return nil }
         try? await Task.sleep(nanoseconds: 1_000_000_000)
 
@@ -312,6 +326,7 @@ struct HandsFreeStudyView: View {
             cardIndex = index + 1
             currentQuestion = card.question
             lastVerdict = nil
+            lastAnswer = nil
 
             statusText = "Frage wird vorgelesen…"
             await speech.speakAndWait(card.question)
@@ -386,6 +401,7 @@ struct HandsFreeStudyView: View {
             Task { await library.recordSpacedRepetitionOutcome(for: card, urteil: urteil) }
             HapticFeedback.play(for: urteil)
             lastVerdict = urteil
+            lastAnswer = card.answer
 
             sessionResults.append(SessionResultEntry(
                 question: card.question,

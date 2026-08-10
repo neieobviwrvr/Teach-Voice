@@ -82,12 +82,20 @@ final class AudioRecorder: NSObject, ObservableObject {
     /// lauten Umgebungen (Café, Bahn, WG-Küche) nie "Stille" erkennen, weil
     /// die Umgebung selbst schon lauter als jeder sinnvolle feste Schwellwert
     /// wäre.
+    ///
+    /// Wichtig: `silenceTimeout` zählt erst NACH dem ersten tatsächlich
+    /// erkannten Sprechen (Pegel über der Schwelle). Eine Denkpause direkt
+    /// am Anfang, bevor der User überhaupt zu sprechen beginnt, darf die
+    /// Aufnahme nicht vorzeitig beenden – sonst würde ein kurzes
+    /// `silenceTimeout` (z.B. 3s) genau die Leute abschneiden, die sich vor
+    /// der Antwort noch kurz sammeln. `maxDuration` bleibt als Sicherheitsnetz
+    /// für den Fall, dass gar nie gesprochen wird.
     func recordUntilSilence(
         calibrationDuration: TimeInterval = 1.0,
         silenceMargin: Float = 12.0,
         minSilenceThresholdDB: Float = -50.0,
         maxSilenceThresholdDB: Float = -20.0,
-        silenceTimeout: TimeInterval = 5.0,
+        silenceTimeout: TimeInterval = 3.0,
         maxDuration: TimeInterval = 45.0
     ) async -> URL? {
         manualStopRequested = false
@@ -98,6 +106,9 @@ final class AudioRecorder: NSObject, ObservableObject {
         var totalElapsed: TimeInterval = 0
         var ambientSamples: [Float] = []
         var silenceThresholdDB: Float?
+        // Wird erst true, sobald der Pegel einmal über der Stille-Schwelle
+        // lag – erst dann darf `silenceElapsed` überhaupt zum Timeout führen.
+        var hasDetectedSpeech = false
 
         while isRecording {
             try? await Task.sleep(nanoseconds: UInt64(pollInterval * 1_000_000_000))
@@ -127,13 +138,20 @@ final class AudioRecorder: NSObject, ObservableObject {
                 silenceThresholdDB = min(maxSilenceThresholdDB, max(minSilenceThresholdDB, ambientFloor + silenceMargin))
             }
 
-            if let threshold = silenceThresholdDB, level < threshold {
-                silenceElapsed += pollInterval
-            } else {
+            guard let threshold = silenceThresholdDB else { continue }
+
+            if level >= threshold {
+                // User spricht gerade (oder beginnt jetzt zu sprechen).
+                hasDetectedSpeech = true
                 silenceElapsed = 0
+            } else if hasDetectedSpeech {
+                // Stille zählt nur, nachdem der User schon mal wirklich
+                // gesprochen hat – eine Denkpause vor dem ersten Wort zählt
+                // bewusst nicht mit.
+                silenceElapsed += pollInterval
             }
 
-            if silenceElapsed >= silenceTimeout || totalElapsed >= maxDuration {
+            if (hasDetectedSpeech && silenceElapsed >= silenceTimeout) || totalElapsed >= maxDuration {
                 break
             }
         }

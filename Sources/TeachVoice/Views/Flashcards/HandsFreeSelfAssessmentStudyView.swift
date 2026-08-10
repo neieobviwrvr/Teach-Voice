@@ -91,6 +91,11 @@ struct HandsFreeSelfAssessmentStudyView: View {
                                     }
                                 }
                             }
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Musterantwort:").font(.caption).foregroundStyle(.secondary)
+                                Text(card.answer).font(.caption)
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
                             Text("Wie empfindest du deine Antwort selbst?")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
