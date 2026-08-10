@@ -109,6 +109,12 @@ struct StudyView: View {
         .task { if let card = currentCard { speech.speak(card.question) } }
         .task { await transcriber.prepareIfNeeded() }
         .onDisappear { speech.stop() }
+        .alert("Mikrofonzugriff benötigt", isPresented: $recorder.permissionDenied) {
+            Button("Zugriff erlauben") { MicrophonePermission.requestOrOpenSettings() }
+            Button("Später", role: .cancel) {}
+        } message: {
+            Text("Ohne Mikrofonzugriff kann deine gesprochene Antwort nicht aufgenommen werden.")
+        }
     }
 
     @ViewBuilder

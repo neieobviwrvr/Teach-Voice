@@ -18,6 +18,7 @@ struct FolderListView: View {
     @State private var newFolderName = ""
     @State private var renamingFolder: Folder?
     @State private var renameText = ""
+    @State private var showMicPermissionNotice = false
 
     private var isFull: Bool { library.folders.count >= maxFoldersPerUser }
 
@@ -105,6 +106,9 @@ struct FolderListView: View {
                 }
             }
             .task { await library.loadFolders() }
+            // Proaktiver Hinweis: die App funktioniert im Kern erst richtig,
+            // wenn der Mikrofonzugriff erlaubt ist (STT-Lernmodus).
+            .task { showMicPermissionNotice = !MicrophonePermission.isGranted }
             .refreshable { await library.loadFolders() }
             .alert("Neuer Ordner", isPresented: $showAddFolder) {
                 TextField("Name", text: $newFolderName)
@@ -139,6 +143,12 @@ struct FolderListView: View {
                 Button("OK", role: .cancel) {}
             } message: {
                 Text(library.errorMessage ?? "")
+            }
+            .alert("Mikrofonzugriff benötigt", isPresented: $showMicPermissionNotice) {
+                Button("Zugriff erlauben") { MicrophonePermission.requestOrOpenSettings() }
+                Button("Später", role: .cancel) {}
+            } message: {
+                Text("Teach (Voice) funktioniert im Kern erst richtig, wenn du den Mikrofonzugriff erlaubst – ohne ihn kann deine gesprochene Antwort im Lernmodus nicht erkannt werden.")
             }
         }
     }
