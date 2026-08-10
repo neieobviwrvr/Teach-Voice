@@ -14,12 +14,16 @@ Zwei bewusst getrennte Modi, je nach Anwendungsfall:
 
 Beide Modi enden mit einem **Statistik-Screen** (X von Y richtig, aufklappbare Detailliste pro Karte) und den Optionen "Unterordner wiederholen" oder "Anderen Unterordner wählen".
 
+## Bewertungs-Strenge (Normal / Tryhard)
+
+Vor jeder Lernsession (Detail wie Hands-free) wählt man `Core/GradingStrictness.swift`: **Normal** (≥65% Deckung = richtig, ≥45% = teilweise) oder **Tryhard** (≥85% / ≥65%, nur präzise vollständige Antworten zählen). Bewusst **pro Session frei wählbar, nicht global fix** (Simons Entscheidung) – das bedeutet, dieselbe Karte kann je nach gewähltem Modus unterschiedlich in die Spaced-Repetition-Box einsortiert werden. Diese eine Einstellung steuert einheitlich: die Selbsteinschätzungs-Vorbelegung im Detail-Modus, den Erfolgs-/Fehler-Ton im Hands-free-Modus, und das Spaced-Repetition-Signal in beiden Modi.
+
 ## Spaced Repetition
 
 Einfaches 5-Stufen-Box-System (`Core/SpacedRepetition.swift`), Intervalle 0/1/3/7/14 Tage: richtig = eine Stufe hoch, teilweise = Stufe bleibt gleich, falsch = zurück auf Stufe 1. Signalquelle je Karte:
 
 - **Detail-Modus**: immer die Selbsteinschätzung des Users (maßgeblich, nicht die KI).
-- **Hands-free-Modus** (keine Selbsteinschätzung möglich): GPTs `deckung_prozent`, gemappt auf dasselbe 3-Stufen-Schema (≥65% richtig, 45–64% teilweise, <45% falsch).
+- **Hands-free-Modus** (keine Selbsteinschätzung möglich): GPTs `deckung_prozent`, gemappt über `GradingStrictness` auf dasselbe 3-Stufen-Schema.
 
 Der Hands-free-Modus sortiert Karten nach Fälligkeit (fällige/überfällige zuerst, dann nie bewertete, dann noch nicht fällige) – ausschließlich Reihenfolge, keine Karte wird ausgeschlossen. Der Detail-Modus bleibt unsortiert (Original-Reihenfolge).
 

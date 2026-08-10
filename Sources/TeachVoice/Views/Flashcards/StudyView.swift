@@ -3,6 +3,7 @@ import SwiftUI
 struct StudyView: View {
     @State private var subfolder: Subfolder
     @State private var cards: [Flashcard]
+    let strictness: GradingStrictness
 
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: LibraryStore
@@ -29,9 +30,10 @@ struct StudyView: View {
     @State private var showSubfolderPicker = false
     @State private var subfolderOptions: [Subfolder] = []
 
-    init(subfolder: Subfolder, cards: [Flashcard]) {
+    init(subfolder: Subfolder, cards: [Flashcard], strictness: GradingStrictness) {
         _subfolder = State(initialValue: subfolder)
         _cards = State(initialValue: cards)
+        self.strictness = strictness
     }
 
     private var currentCard: Flashcard? {
@@ -144,17 +146,21 @@ struct StudyView: View {
 
     @ViewBuilder
     private func gradingResultView(_ result: GradingResult, card: Flashcard) -> some View {
+        // Eigenes, strenge-abhängiges Urteil statt des festen Server-Urteils –
+        // muss zur Vorbelegung der Selbsteinschätzungs-Buttons passen, sonst
+        // widersprechen sich Badge und vorausgewählter Button.
+        let displayUrteil = strictness.urteil(fromDeckungProzent: result.deckungProzent)
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Image(systemName: verdictIcon(result.urteil))
-                Text(verdictLabel(result.urteil))
+                Image(systemName: verdictIcon(displayUrteil))
+                Text(verdictLabel(displayUrteil))
                     .font(.headline)
                 Spacer()
                 Text("\(Int(result.deckungProzent.rounded()))% getroffen")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            .foregroundStyle(verdictColor(result.urteil))
+            .foregroundStyle(verdictColor(displayUrteil))
 
             Text(result.kurzesFeedback)
                 .font(.subheadline)
@@ -185,7 +191,7 @@ struct StudyView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(verdictColor(result.urteil).opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
+        .background(verdictColor(displayUrteil).opacity(0.12), in: RoundedRectangle(cornerRadius: 12))
     }
 
     /// Ein Selbsteinschätzungs-Button. Ein Tap ist zugleich die finale
@@ -324,8 +330,10 @@ struct StudyView: View {
                 accessToken: token
             )
             gradingResult = result
-            // Vorschlag vorbelegen – der User kann das jederzeit überschreiben.
-            selfAssessment = result.urteil
+            // Vorschlag vorbelegen (nach der gewählten Strenge dieser Session,
+            // nicht nach dem festen Server-Urteil) – der User kann das
+            // jederzeit überschreiben.
+            selfAssessment = strictness.urteil(fromDeckungProzent: result.deckungProzent)
             if !cacheStillValid {
                 await library.cacheKernelemente(kernelemente, for: card, sourceHash: currentHash)
             }

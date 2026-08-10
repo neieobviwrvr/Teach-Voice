@@ -16,6 +16,7 @@ import SwiftUI
 struct HandsFreeStudyView: View {
     @State private var cards: [Flashcard]
     @State private var title: String
+    let strictness: GradingStrictness
 
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: LibraryStore
@@ -37,14 +38,10 @@ struct HandsFreeStudyView: View {
     @State private var showSubfolderPicker = false
     @State private var subfolderOptions: [Subfolder] = []
 
-    /// Eigene, großzügigere Schwelle nur für das unmittelbare Ton-Feedback
-    /// (statt der 65%/45%-Dreistufigkeit, die die Spaced-Repetition-Planung
-    /// nutzt) – auf Wunsch bewusst bei 50%.
-    private let handsFreeCorrectThreshold: Double = 50
-
-    init(cards: [Flashcard], title: String = "Hands-free") {
+    init(cards: [Flashcard], title: String = "Hands-free", strictness: GradingStrictness) {
         _cards = State(initialValue: SpacedRepetition.ordered(cards))
         _title = State(initialValue: title)
+        self.strictness = strictness
     }
 
     private var currentCard: Flashcard? {
@@ -193,22 +190,24 @@ struct HandsFreeStudyView: View {
                 await library.cacheKernelemente(kernelemente, for: card, sourceHash: currentHash)
             }
 
-            // Keine Selbsteinschätzung möglich (hands-free!) -> GPTs Deckung
-            // ist die alleinige Signalquelle für die Spaced-Repetition-Planung,
-            // gemappt auf dasselbe 3-Stufen-Schema wie im Detail-Modus.
-            let srsUrteil = SpacedRepetition.urteil(fromDeckungProzent: result.deckungProzent)
-            Task { await library.recordSpacedRepetitionOutcome(for: card, urteil: srsUrteil) }
+            // Keine Selbsteinschätzung möglich (hands-free!) -> GPTs Deckung,
+            // gemappt über die gewählte Session-Strenge (Normal/Tryhard), ist
+            // die alleinige Signalquelle – für SRS-Planung UND Ton-Feedback
+            // gleichermaßen (eine einzige Stellschraube statt zweier
+            // unterschiedlicher Schwellen wie vorher).
+            let urteil = strictness.urteil(fromDeckungProzent: result.deckungProzent)
+            Task { await library.recordSpacedRepetitionOutcome(for: card, urteil: urteil) }
 
-            let isCorrect = result.deckungProzent >= handsFreeCorrectThreshold
+            let isCorrect = urteil == .richtig
             lastVerdict = isCorrect
             statusText = isCorrect ? "Richtig!" : "Leider falsch."
-            HapticFeedback.play(for: isCorrect ? .richtig : .falsch)
+            HapticFeedback.play(for: urteil)
             await soundPlayer.play(isCorrect ? .success : .failure)
 
             sessionResults.append(SessionResultEntry(
                 question: card.question,
                 isCorrect: isCorrect,
-                label: isCorrect ? "Richtig" : "Falsch",
+                label: verdictLabel(urteil),
                 percent: result.deckungProzent
             ))
         } catch {
@@ -221,6 +220,14 @@ struct HandsFreeStudyView: View {
                 label: "Fehler",
                 percent: 0
             ))
+        }
+    }
+
+    private func verdictLabel(_ urteil: GradingResult.Urteil) -> String {
+        switch urteil {
+        case .richtig: return "Richtig"
+        case .teilweise: return "Teilweise richtig"
+        case .falsch: return "Falsch"
         }
     }
 

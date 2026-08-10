@@ -21,9 +21,13 @@ struct FolderListView: View {
     @State private var showMicPermissionNotice = false
     @State private var handsFreeCards: [Flashcard]?
     @State private var handsFreeTitle = "Hands-free"
+    @State private var handsFreeStrictness: GradingStrictness = .normal
     @State private var isLoadingHandsFree = false
     @State private var showHandsFreeSubfolderPicker = false
     @State private var handsFreeSubfolderOptions: [Subfolder] = []
+    @State private var pendingHandsFreeCards: [Flashcard]?
+    @State private var pendingHandsFreeTitle = ""
+    @State private var showHandsFreeStrictnessPicker = false
 
     private var isFull: Bool { library.folders.count >= maxFoldersPerUser }
 
@@ -89,7 +93,7 @@ struct FolderListView: View {
                 SubfolderListView(folder: folder)
             }
             .navigationDestination(item: $handsFreeCards) { cards in
-                HandsFreeStudyView(cards: cards, title: handsFreeTitle)
+                HandsFreeStudyView(cards: cards, title: handsFreeTitle, strictness: handsFreeStrictness)
             }
             .navigationTitle("Meine Ordner")
             .toolbar {
@@ -190,6 +194,22 @@ struct FolderListView: View {
                 }
                 Button("Abbrechen", role: .cancel) {}
             }
+            .confirmationDialog(
+                "Wie streng bewerten?",
+                isPresented: $showHandsFreeStrictnessPicker,
+                titleVisibility: .visible
+            ) {
+                ForEach(GradingStrictness.allCases) { strictness in
+                    Button(strictness.label) {
+                        handsFreeTitle = pendingHandsFreeTitle
+                        handsFreeStrictness = strictness
+                        handsFreeCards = pendingHandsFreeCards
+                    }
+                }
+                Button("Abbrechen", role: .cancel) {}
+            } message: {
+                Text(GradingStrictness.normal.description + "\n" + GradingStrictness.tryhard.description)
+            }
         }
     }
 
@@ -223,7 +243,8 @@ struct FolderListView: View {
             library.errorMessage = "Keine Karteikarten vorhanden."
             return
         }
-        handsFreeTitle = title
-        handsFreeCards = cards
+        pendingHandsFreeTitle = title
+        pendingHandsFreeCards = cards
+        showHandsFreeStrictnessPicker = true
     }
 }

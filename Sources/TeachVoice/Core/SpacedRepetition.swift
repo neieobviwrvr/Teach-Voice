@@ -8,7 +8,8 @@ import Foundation
 /// - Detail-Modus: die Selbsteinschätzung des Users ist immer maßgeblich
 ///   (Tap auf einen der drei Buttons ist zugleich die SRS-Eingabe).
 /// - Hands-free-Modus (keine Selbsteinschätzung möglich): GPTs `deckung_prozent`
-///   wird über `urteil(fromDeckungProzent:)` auf dasselbe 3-Stufen-Schema
+///   wird über `GradingStrictness.urteil(fromDeckungProzent:)` (je nach
+///   gewähltem Normal/Tryhard-Modus der Session) auf dasselbe 3-Stufen-Schema
 ///   abgebildet wie die Selbsteinschätzungs-Buttons.
 enum SpacedRepetition {
     static let minBox = 1
@@ -37,17 +38,6 @@ enum SpacedRepetition {
         let days = intervalDays[newBox - minBox]
         let dueAt = Calendar.current.date(byAdding: .day, value: days, to: now) ?? now
         return Outcome(newBox: newBox, dueAt: dueAt)
-    }
-
-    /// Bildet eine GPT-Deckung (0-100) auf dasselbe 3-stufige Schema ab wie
-    /// die Selbsteinschätzungs-Buttons – für Karten ohne Eigeneinschätzung.
-    /// Bewusst dieselben Schwellen wie der Detail-Modus-Urteil-Fallback
-    /// (65%/45%), NICHT die 50%-Schwelle des Hands-free-Tons – der Ton ist
-    /// nur unmittelbares Feedback, dieses Mapping steuert die Wiederholungsplanung.
-    static func urteil(fromDeckungProzent percent: Double) -> GradingResult.Urteil {
-        if percent >= 65 { return .richtig }
-        if percent >= 45 { return .teilweise }
-        return .falsch
     }
 
     /// Sortiert Karten für den Hands-free-Modus: fällige/überfällige Karten

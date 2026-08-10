@@ -6,6 +6,8 @@ struct FlashcardListView: View {
     @EnvironmentObject private var library: LibraryStore
     @State private var showAddCard = false
     @State private var editingCard: Flashcard?
+    @State private var showStrictnessPicker = false
+    @State private var pendingStrictness: GradingStrictness?
 
     private var cards: [Flashcard] { library.flashcards(in: subfolder) }
     private var isFull: Bool { cards.count >= maxFlashcardsPerSubfolder }
@@ -14,8 +16,8 @@ struct FlashcardListView: View {
         List {
             if !cards.isEmpty {
                 Section {
-                    NavigationLink {
-                        StudyView(subfolder: subfolder, cards: cards)
+                    Button {
+                        showStrictnessPicker = true
                     } label: {
                         Label("Lernen starten (Sprachmodus)", systemImage: "waveform")
                     }
@@ -60,6 +62,17 @@ struct FlashcardListView: View {
             }
         }
         .navigationTitle(subfolder.name)
+        .navigationDestination(item: $pendingStrictness) { strictness in
+            StudyView(subfolder: subfolder, cards: cards, strictness: strictness)
+        }
+        .confirmationDialog("Wie streng bewerten?", isPresented: $showStrictnessPicker, titleVisibility: .visible) {
+            ForEach(GradingStrictness.allCases) { mode in
+                Button(mode.label) { pendingStrictness = mode }
+            }
+            Button("Abbrechen", role: .cancel) {}
+        } message: {
+            Text(GradingStrictness.normal.description + "\n" + GradingStrictness.tryhard.description)
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {

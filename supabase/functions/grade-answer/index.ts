@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 const OPENAI_MODEL = "gpt-4o-mini";
 const THRESHOLD_RICHTIG = 65; // % Kernelement-Deckung ab der "richtig" gilt
-const THRESHOLD_TEILWEISE = 40; // % Deckung ab der "teilweise" gilt (darunter: "falsch")
+const THRESHOLD_TEILWEISE = 45; // % Deckung ab der "teilweise" gilt (darunter: "falsch")
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
