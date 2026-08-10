@@ -55,8 +55,10 @@ struct HandsFreeSelfAssessmentStudyView: View {
                         .font(.footnote)
                         .foregroundStyle(.secondary)
 
-                    Text(card.question)
-                        .font(.title2.bold())
+                    // Kein pauschales .bold() – sonst geht die manuell im
+                    // Editor gesetzte Fett-Markierung unter (siehe StudyView).
+                    Text(flashcardMarkdown: card.question)
+                        .font(.title2)
                         .multilineTextAlignment(.center)
                         .padding()
                         .frame(maxWidth: .infinity)
@@ -93,7 +95,7 @@ struct HandsFreeSelfAssessmentStudyView: View {
                             }
                             VStack(alignment: .leading, spacing: 4) {
                                 Text("Musterantwort:").font(.caption).foregroundStyle(.secondary)
-                                Text(card.answer).font(.caption)
+                                Text(flashcardMarkdown: card.answer).font(.caption)
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
                             Text("Wie empfindest du deine Antwort selbst?")
@@ -168,7 +170,7 @@ struct HandsFreeSelfAssessmentStudyView: View {
             pendingGradingResult = nil
 
             statusText = "Frage wird vorgelesen…"
-            await speech.speakAndWait(card.question)
+            await speech.speakAndWait(FlashcardMarkdown.plainText(from: card.question))
             if Task.isCancelled { break }
 
             try? await Task.sleep(nanoseconds: 1_500_000_000)

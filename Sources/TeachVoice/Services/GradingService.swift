@@ -59,7 +59,11 @@ enum GradingService {
         request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
 
         let body = GradeRequestBody(
-            question: question,
+            // Fett-Markierung in der Frage ist rein fürs eigene Lernen gedacht
+            // (Simons Vorgabe) und soll KEINE Auswirkung auf GPT haben – die
+            // Antwort behält ihre Formatierung dagegen bewusst, da sie als
+            // Signal in die Kernelemente-Extraktion einfließt (siehe index.ts).
+            question: FlashcardMarkdown.plainText(from: question),
             answer: answer,
             kernelemente: (cachedKernelemente?.isEmpty ?? true) ? nil : cachedKernelemente,
             sttText: sttText

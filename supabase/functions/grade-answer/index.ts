@@ -136,6 +136,15 @@ Speichersystem, das Informationen aktiv festhält", "verarbeitet Informationen
 gleichzeitig, z.B. beim Kopfrechnen") – NICHT 4, indem "kurzfristig", "festhält",
 "verarbeitet" und das Beispiel einzeln aufgesplittet werden.
 
+Hinweis zur Formatierung der Musterantwort: Sie kann "**fett**" markierte
+Textstellen enthalten – diese hat der/die Ersteller/in der Karte bewusst als
+besonders wichtig hervorgehoben, sie sollten bevorzugt als eigene bzw. zentrale
+Kernelemente auftauchen, nicht übergangen werden. Zeilen, die mit "- " beginnen,
+sind bereits vom Ersteller in Aufzählungspunkte gegliedert – orientiere dich
+stark an dieser Gliederung, falls vorhanden (meist entspricht ein
+Aufzählungspunkt einem oder mehreren eng verwandten Kernelementen). Gib die
+Kernelemente selbst als reinen Text OHNE "**"/"- " zurück.
+
 Frage: ${question}
 Musterantwort: ${answer}
 

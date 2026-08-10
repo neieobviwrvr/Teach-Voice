@@ -49,12 +49,16 @@ struct StudyView: View {
                         .foregroundStyle(.secondary)
 
                     VStack(spacing: 12) {
-                        Text(card.question)
-                            .font(.title2.bold())
+                        // Kein pauschales .bold() mehr auf dem ganzen Titel:
+                        // sonst würde die manuell im Editor gesetzte
+                        // Fett-Markierung (siehe FlashcardMarkdown) untergehen,
+                        // weil ohnehin schon alles fett wäre.
+                        Text(flashcardMarkdown: card.question)
+                            .font(.title2)
                             .multilineTextAlignment(.center)
 
                         Button {
-                            speech.speak(card.question)
+                            speech.speak(FlashcardMarkdown.plainText(from: card.question))
                         } label: {
                             Label(speech.isSpeaking ? "Spielt ab…" : "Frage nochmal vorlesen", systemImage: "speaker.wave.2.fill")
                         }
@@ -125,7 +129,7 @@ struct StudyView: View {
         // von TTS völlig unabhängige) Whisper-Vorbereitung braucht. Vorher
         // liefen beide nacheinander in einem Task, wodurch das Vorlesen auf
         // die Whisper-Vorbereitung warten musste.
-        .task { if let card = currentCard { speech.speak(card.question) } }
+        .task { if let card = currentCard { speech.speak(FlashcardMarkdown.plainText(from: card.question)) } }
         .task { await transcriber.prepareIfNeeded() }
         .onDisappear { speech.stop() }
         .alert("Mikrofonzugriff benötigt", isPresented: $recorder.permissionDenied) {
@@ -177,7 +181,7 @@ struct StudyView: View {
 
             Divider()
             Text("Musterantwort:").font(.caption).foregroundStyle(.secondary)
-            Text(card.answer).font(.caption)
+            Text(flashcardMarkdown: card.answer).font(.caption)
 
             Divider()
             Text("Wie empfindest du deine Antwort selbst?")
@@ -349,7 +353,7 @@ struct StudyView: View {
         selfAssessment = nil
         index += 1
         if let card = currentCard {
-            speech.speak(card.question)
+            speech.speak(FlashcardMarkdown.plainText(from: card.question))
         }
     }
 
@@ -361,7 +365,7 @@ struct StudyView: View {
         gradingError = nil
         selfAssessment = nil
         if let card = currentCard {
-            speech.speak(card.question)
+            speech.speak(FlashcardMarkdown.plainText(from: card.question))
         }
     }
 

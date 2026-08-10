@@ -89,8 +89,10 @@ struct HandsFreeStudyView: View {
                 }
 
                 if let currentQuestion {
-                    Text(currentQuestion)
-                        .font(.title2.bold())
+                    // Kein pauschales .bold() – sonst geht die manuell im
+                    // Editor gesetzte Fett-Markierung unter (siehe StudyView).
+                    Text(flashcardMarkdown: currentQuestion)
+                        .font(.title2)
                         .multilineTextAlignment(.center)
                         .padding()
                         .frame(maxWidth: .infinity)
@@ -321,7 +323,7 @@ struct HandsFreeStudyView: View {
             lastVerdict = nil
 
             statusText = "Frage wird vorgelesen…"
-            await speech.speakAndWait(card.question)
+            await speech.speakAndWait(FlashcardMarkdown.plainText(from: card.question))
             if Task.isCancelled { break }
 
             try? await Task.sleep(nanoseconds: 1_500_000_000)

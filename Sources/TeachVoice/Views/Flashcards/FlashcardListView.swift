@@ -30,8 +30,8 @@ struct FlashcardListView: View {
                         editingCard = card
                     } label: {
                         VStack(alignment: .leading, spacing: 4) {
-                            Text(card.question).font(.body)
-                            Text(card.answer).font(.caption).foregroundStyle(.secondary)
+                            Text(flashcardMarkdown: card.question).font(.body)
+                            Text(flashcardMarkdown: card.answer).font(.caption).foregroundStyle(.secondary)
                         }
                     }
                     .buttonStyle(.plain)
