@@ -6,6 +6,7 @@ final class SpeechService: NSObject, ObservableObject {
     @Published private(set) var isSpeaking = false
 
     private let synthesizer = AVSpeechSynthesizer()
+    private var pendingContinuation: CheckedContinuation<Void, Never>?
 
     override init() {
         super.init()
@@ -23,14 +24,31 @@ final class SpeechService: NSObject, ObservableObject {
         synthesizer.speak(utterance)
     }
 
+    /// Für den Hands-free-Modus: wartet, bis die Frage fertig vorgelesen ist,
+    /// bevor der nächste Schritt (Mikro freigeben) losläuft.
+    func speakAndWait(_ text: String, languageHint: String? = nil) async {
+        guard !text.isEmpty else { return }
+        await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
+            pendingContinuation = continuation
+            speak(text, languageHint: languageHint)
+        }
+    }
+
     func stop() {
         synthesizer.stopSpeaking(at: .immediate)
+        pendingContinuation?.resume()
+        pendingContinuation = nil
     }
 
     /// Sehr einfache Heuristik: deutsches Gerätegebietsschema als Default,
     /// da die App primär für deutschsprachige Studierende gedacht ist.
     private func detectedLanguage(for text: String) -> String {
         Locale.preferredLanguages.first ?? "de-DE"
+    }
+
+    fileprivate func resolvePendingContinuation() {
+        pendingContinuation?.resume()
+        pendingContinuation = nil
     }
 }
 
@@ -40,10 +58,16 @@ extension SpeechService: AVSpeechSynthesizerDelegate {
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = false }
+        Task { @MainActor in
+            self.isSpeaking = false
+            self.resolvePendingContinuation()
+        }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = false }
+        Task { @MainActor in
+            self.isSpeaking = false
+            self.resolvePendingContinuation()
+        }
     }
 }

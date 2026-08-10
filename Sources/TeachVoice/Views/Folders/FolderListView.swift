@@ -19,6 +19,8 @@ struct FolderListView: View {
     @State private var renamingFolder: Folder?
     @State private var renameText = ""
     @State private var showMicPermissionNotice = false
+    @State private var handsFreeCards: [Flashcard]?
+    @State private var isLoadingHandsFree = false
 
     private var isFull: Bool { library.folders.count >= maxFoldersPerUser }
 
@@ -31,6 +33,20 @@ struct FolderListView: View {
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                     }
+                }
+
+                Section {
+                    Button {
+                        Task { await startHandsFree() }
+                    } label: {
+                        Label(
+                            isLoadingHandsFree ? "Lädt…" : "Hands-free lernen",
+                            systemImage: "waveform"
+                        )
+                    }
+                    .disabled(isLoadingHandsFree)
+                } footer: {
+                    Text("Fragt automatisch alle Karten über beide Unterordner hinweg ab – rein per Sprache, kein Antippen nötig.")
                 }
 
                 ForEach(library.folders) { folder in
@@ -68,6 +84,9 @@ struct FolderListView: View {
             }
             .navigationDestination(for: Folder.self) { folder in
                 SubfolderListView(folder: folder)
+            }
+            .navigationDestination(item: $handsFreeCards) { cards in
+                HandsFreeStudyView(cards: cards)
             }
             .navigationTitle("Meine Ordner")
             .toolbar {
@@ -151,5 +170,17 @@ struct FolderListView: View {
                 Text("Teach (Voice) funktioniert im Kern erst richtig, wenn du den Mikrofonzugriff erlaubst – ohne ihn kann deine gesprochene Antwort im Lernmodus nicht erkannt werden.")
             }
         }
+    }
+
+    private func startHandsFree() async {
+        isLoadingHandsFree = true
+        let allCards = await library.loadAllFlashcardsAcrossFolders()
+        isLoadingHandsFree = false
+
+        guard !allCards.isEmpty else {
+            library.errorMessage = "Keine Karteikarten vorhanden – lege zuerst welche an."
+            return
+        }
+        handsFreeCards = allCards
     }
 }

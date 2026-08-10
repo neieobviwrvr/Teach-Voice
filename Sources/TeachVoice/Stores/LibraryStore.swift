@@ -31,6 +31,22 @@ final class LibraryStore: ObservableObject {
     func subfolders(in folder: Folder) -> [Subfolder] { subfolders[folder.id] ?? [] }
     func flashcards(in subfolder: Subfolder) -> [Flashcard] { flashcards[subfolder.id] ?? [] }
 
+    /// Für den Hands-free-Modus (Button auf dem Homescreen): sammelt alle
+    /// Karteikarten über alle Unterordner aller Ordner hinweg in einer Liste,
+    /// lädt dafür bei Bedarf erst noch die Unterordner/Karten nach.
+    func loadAllFlashcardsAcrossFolders() async -> [Flashcard] {
+        if folders.isEmpty { await loadFolders() }
+        var all: [Flashcard] = []
+        for folder in folders {
+            if subfolders(in: folder).isEmpty { await loadSubfolders(for: folder) }
+            for subfolder in subfolders(in: folder) {
+                if flashcards(in: subfolder).isEmpty { await loadFlashcards(for: subfolder) }
+                all.append(contentsOf: flashcards(in: subfolder))
+            }
+        }
+        return all
+    }
+
     // MARK: - Folders
 
     func loadFolders() async {

@@ -5,6 +5,13 @@ iOS-App (SwiftUI) für sprachbasiertes Karteikarten-Lernen an der Uni:
 - **STT**: Antwort wird per **Whisper-base** (lokal, on-device via [WhisperKit](https://github.com/argmaxinc/WhisperKit)/CoreML) transkribiert – kein Server-Roundtrip für die Spracherkennung.
 - **Backend**: [Supabase](https://supabase.com) (Postgres + Auth) – Ordner, Unterordner und Karteikarten sind je Nutzer isoliert (Row Level Security).
 
+## Lernmodi
+
+Zwei bewusst getrennte Modi, je nach Anwendungsfall:
+
+- **Detail** (Button in einem Unterordner): visuell, zeigt KI-Feedback (Deckung, fehlende Kernelemente, Musterantwort) und lässt dich am Ende per Buttons selbst einschätzen (richtig/teilweise/falsch) – die KI-Einschätzung ist nur ein vorbelegter Vorschlag.
+- **Hands-free** (Button auf dem Homescreen): rein audio-getrieben über alle Karten aller Unterordner hinweg. Frage wird vorgelesen → nach 1,5s öffnet sich automatisch das Mikrofon → Aufnahme endet nach 5s Stille (kürzere Sprechpausen zählen nicht) → automatische Transkription + Bewertung → kurzer Erfolgs-/Fehler-Ton (kein gesprochenes Feedback) → nächste Frage, bis zum Ende. Kein Antippen nötig außer optional zum Abbrechen. Nutzt eine eigene, großzügigere 50%-Schwelle für richtig/falsch (statt der 65%/40%-Dreistufigkeit im Detail-Modus), da hier binär entschieden werden muss.
+
 ## Struktur
 
 - Ordner (Ober-Ordner, umbenennbar) → Unterordner (umbenennbar) → Karteikarten (Frage + Antwort, nachträglich bearbeitbar).
