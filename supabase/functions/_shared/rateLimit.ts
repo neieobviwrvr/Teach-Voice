@@ -39,17 +39,48 @@ function extractUserId(authHeader: string | null): string | null {
   }
 }
 
-/// `true` = Anfrage erlaubt, `false` = Limit für dieses Stunden-Fenster
-/// erreicht. Bei technischen Problemen (z.B. Secret fehlt, DB nicht
-/// erreichbar) wird bewusst "fail open" entschieden – ein Konfigurations-
-/// fehler soll nicht sofort die ganze App für alle legitimen User lahmlegen,
-/// nur weil der Abuse-Schutz selbst kurz klemmt.
-export async function checkRateLimit(identity: string, maxRequestsPerHour: number): Promise<boolean> {
+/// "ok" = Anfrage erlaubt. "rate_limited" = echtes Limit erreicht (429).
+/// "unavailable" = die Prüfung selbst ist technisch fehlgeschlagen (Secret
+/// fehlt, DB nicht erreichbar, unerwarteter Fehler) – FAIL CLOSED (Simons
+/// ausdrücklicher Wunsch): läuft die Schutzmaßnahme selbst kaputt, soll das
+/// NICHT automatisch "unbegrenzt GPT-Calls" bedeuten, sondern die Anfrage
+/// wird abgelehnt, bis die Prüfung wieder funktioniert. Getrennt von
+/// "rate_limited" gehalten, damit ein technischer Fehler nicht fälschlich
+/// als "du hast zu viel angefragt" beim User ankommt.
+export type RateLimitOutcome = "ok" | "rate_limited" | "unavailable";
+
+const GLOBAL_GUEST_IDENTITY = "global:all-guests";
+
+/// Prüft das Pro-Identität-Limit UND – nur für anonyme (IP-basierte)
+/// Anfragen – zusätzlich einen GLOBALEN Deckel über ALLE Gäste zusammen.
+/// Grund: ein reiner Pro-IP-Zähler lässt sich durch IP-Wechsel (VPN, Mobilfunk-
+/// Wechsel) umgehen – ein client-mitgeschicktes "Geräte-ID"-Merkmal würde das
+/// NICHT lösen, da ein Angreifer eine solche ID genauso frei erfinden/rotieren
+/// könnte. Der globale Deckel ist dagegen serverseitig unabhängig von jedem
+/// Client-Signal und fängt verteilten Missbrauch über viele IPs auf, auch
+/// wenn er einzelne, tatsächlich verschiedene legitime Gäste nicht mehr
+/// unterscheiden kann – bewusster Kompromiss für anonymen Zugriff ohne Login.
+export async function checkRateLimit(
+  identity: string,
+  maxRequestsPerHour: number,
+  globalGuestMaxRequestsPerHour?: number
+): Promise<RateLimitOutcome> {
+  const perIdentity = await checkSingleLimit(identity, maxRequestsPerHour);
+  if (perIdentity !== "ok") return perIdentity;
+
+  if (identity.startsWith("ip:") && globalGuestMaxRequestsPerHour) {
+    return checkSingleLimit(GLOBAL_GUEST_IDENTITY, globalGuestMaxRequestsPerHour);
+  }
+
+  return "ok";
+}
+
+async function checkSingleLimit(identity: string, maxRequestsPerHour: number): Promise<RateLimitOutcome> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) {
-    console.error("Rate-Limiting nicht konfiguriert (SUPABASE_URL/SERVICE_ROLE_KEY fehlt) – lasse Anfrage durch.");
-    return true;
+    console.error("Rate-Limiting nicht konfiguriert (SUPABASE_URL/SERVICE_ROLE_KEY fehlt) – lehne Anfrage ab (fail closed).");
+    return "unavailable";
   }
 
   try {
@@ -65,12 +96,13 @@ export async function checkRateLimit(identity: string, maxRequestsPerHour: numbe
 
     if (!response.ok) {
       console.error("Rate-Limit-Check fehlgeschlagen:", response.status, await response.text());
-      return true;
+      return "unavailable";
     }
 
-    return (await response.json()) as boolean;
+    const allowed = (await response.json()) as boolean;
+    return allowed ? "ok" : "rate_limited";
   } catch (err) {
     console.error("Rate-Limit-Check-Fehler:", err);
-    return true;
+    return "unavailable";
   }
 }

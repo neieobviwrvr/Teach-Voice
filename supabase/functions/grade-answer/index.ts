@@ -39,6 +39,10 @@ const THRESHOLD_TEILWEISE = 45; // % Deckung ab der "teilweise" gilt (darunter: 
 // schon 100 Calls in einer Session -- 60 war fuers echte intensive
 // Klausur-Lernen zu knapp (Simons Einwand).
 const RATE_LIMIT_MAX_PER_HOUR = 150;
+// Backstop gegen verteilten Missbrauch ueber viele wechselnde IPs im
+// Gastmodus (siehe rateLimit.ts) -- deutlich hoeher als das Pro-Identitaet-
+// Limit, da hier mehrere echte gleichzeitige Gaeste zusammenfallen.
+const RATE_LIMIT_GLOBAL_GUEST_MAX_PER_HOUR = 600;
 const MAX_QUESTION_LENGTH = 5_000;
 const MAX_ANSWER_LENGTH = 5_000;
 const MAX_STT_LENGTH = 10_000;
@@ -81,9 +85,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     const identity = await resolveIdentity(req);
-    const allowed = await checkRateLimit(identity, RATE_LIMIT_MAX_PER_HOUR);
-    if (!allowed) {
+    const rateLimitOutcome = await checkRateLimit(identity, RATE_LIMIT_MAX_PER_HOUR, RATE_LIMIT_GLOBAL_GUEST_MAX_PER_HOUR);
+    if (rateLimitOutcome === "rate_limited") {
       return jsonResponse({ error: "Zu viele Anfragen. Bitte kurz warten und erneut versuchen." }, 429);
+    }
+    if (rateLimitOutcome === "unavailable") {
+      return jsonResponse({ error: "Bewertung vorübergehend nicht verfügbar (Sicherheitsprüfung fehlgeschlagen). Bitte in Kürze erneut versuchen." }, 503);
     }
 
     const body = (await req.json()) as GradeRequest;

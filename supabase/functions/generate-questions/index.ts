@@ -29,6 +29,9 @@ const MAX_TEXT_LENGTH = 80_000; // muss mit PDFTextExtractor.characterCap (Swift
 // Unterordner zu importieren (z.B. 13 Wochen laut Simons Beispiel-Syllabus)
 // sind schon 13+ Import-Aktionen in einer Sitzung -- 20 war dafuer zu eng.
 const RATE_LIMIT_MAX_PER_HOUR = 40;
+// Backstop gegen verteilten Missbrauch ueber viele wechselnde IPs im
+// Gastmodus (siehe rateLimit.ts).
+const RATE_LIMIT_GLOBAL_GUEST_MAX_PER_HOUR = 150;
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -56,9 +59,12 @@ Deno.serve(async (req: Request) => {
 
   try {
     const identity = await resolveIdentity(req);
-    const allowed = await checkRateLimit(identity, RATE_LIMIT_MAX_PER_HOUR);
-    if (!allowed) {
+    const rateLimitOutcome = await checkRateLimit(identity, RATE_LIMIT_MAX_PER_HOUR, RATE_LIMIT_GLOBAL_GUEST_MAX_PER_HOUR);
+    if (rateLimitOutcome === "rate_limited") {
       return jsonResponse({ error: "Zu viele Anfragen. Bitte kurz warten und erneut versuchen." }, 429);
+    }
+    if (rateLimitOutcome === "unavailable") {
+      return jsonResponse({ error: "Generierung vorübergehend nicht verfügbar (Sicherheitsprüfung fehlgeschlagen). Bitte in Kürze erneut versuchen." }, 503);
     }
 
     const body = (await req.json()) as GenerateRequest;
