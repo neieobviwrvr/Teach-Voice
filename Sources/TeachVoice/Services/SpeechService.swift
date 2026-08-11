@@ -74,7 +74,7 @@ final class SpeechService: NSObject, ObservableObject {
 
     private func makeUtterance(_ text: String, languageHint: String?) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = AVSpeechSynthesisVoice(language: languageHint ?? detectedLanguage(for: text))
+        utterance.voice = Self.preferredVoice(languageCode: languageHint ?? detectedLanguage(for: text))
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         return utterance
     }
@@ -83,6 +83,37 @@ final class SpeechService: NSObject, ObservableObject {
     /// da die App primär für deutschsprachige Studierende gedacht ist.
     private func detectedLanguage(for text: String) -> String {
         Locale.preferredLanguages.first ?? "de-DE"
+    }
+
+    /// Wählt automatisch die beste auf DIESEM Gerät bereits heruntergeladene
+    /// Stimme für die gegebene Sprache, statt blind Apples Standard-
+    /// Kompaktstimme zu nehmen:
+    /// 1. Eine Siri-Stimme, falls unter Einstellungen -> Bedienungshilfen ->
+    ///    Gesprochener Inhalt -> Stimmen heruntergeladen (Simons Fall: "Siri
+    ///    Stimme 2") -- diese sind inzwischen auch für Drittanbieter-Apps über
+    ///    `AVSpeechSynthesisVoice.speechVoices()` nutzbar, nicht mehr
+    ///    Siri selbst vorbehalten. Bewusst über den Namen/die Kennung
+    ///    gesucht statt eine feste ID hart zu hinterlegen -- die kann sich je
+    ///    nach iOS-Version/Region unterscheiden, und so wird automatisch
+    ///    genau die eine gefunden, die tatsächlich heruntergeladen ist.
+    /// 2. Sonst die beste andere heruntergeladene Enhanced/Premium-Stimme.
+    /// 3. Sonst Apples Standard-Kompaktstimme (immer verfügbar, auch ganz
+    ///    ohne jeden manuellen Download) als letzter Fallback.
+    static func preferredVoice(languageCode: String) -> AVSpeechSynthesisVoice? {
+        let candidates = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == languageCode }
+
+        if let siri = candidates.first(where: {
+            $0.name.localizedCaseInsensitiveContains("siri") || $0.identifier.localizedCaseInsensitiveContains("siri")
+        }) {
+            return siri
+        }
+        if let premium = candidates.first(where: { $0.quality == .premium }) {
+            return premium
+        }
+        if let enhanced = candidates.first(where: { $0.quality == .enhanced }) {
+            return enhanced
+        }
+        return AVSpeechSynthesisVoice(language: languageCode)
     }
 
     fileprivate func utteranceDidFinishOrCancel() {
