@@ -106,28 +106,34 @@ struct FolderListView: View {
     @ViewBuilder
     private var handsFreeSection: some View {
         Section {
-            Button {
-                Task { await startVoiceOnlyFlow() }
-            } label: {
-                Label(
-                    isLoadingHandsFree ? "Lädt…" : "Hands-free (Voice only)",
-                    systemImage: "waveform"
-                )
+            handsFreeButton(title: "Hands-free (Voice only)", systemImage: "waveform") {
+                await startVoiceOnlyFlow()
             }
-            .disabled(isLoadingHandsFree)
-
-            Button {
-                Task { await startEigenbewertungFlow() }
-            } label: {
-                Label(
-                    isLoadingHandsFree ? "Lädt…" : "Hands-free lernen (Eigenbewertung)",
-                    systemImage: "hand.tap"
-                )
+            handsFreeButton(title: "Hands-free lernen (Eigenbewertung)", systemImage: "hand.tap") {
+                await startEigenbewertungFlow()
             }
-            .disabled(isLoadingHandsFree)
         } footer: {
             Text("\"Voice only\": komplett per Sprache, die App fragt dich selbst welchen Unterordner du lernen willst, GPT bewertet allein. \"Eigenbewertung\": Unterordner per Pop-up wählen, nach jeder Frage entscheidest du selbst per Button.")
         }
+    }
+
+    /// Einheitlicher Ladezustand mit echtem Spinner statt reinem Text-Swap
+    /// ("Lädt…") – konsistent mit dem Rest der App (PDFImportView, StudyView),
+    /// die für laufende Vorgänge durchgängig einen `ProgressView` zeigen.
+    private func handsFreeButton(title: String, systemImage: String, action: @escaping () async -> Void) -> some View {
+        Button {
+            Task { await action() }
+        } label: {
+            HStack {
+                if isLoadingHandsFree {
+                    ProgressView()
+                } else {
+                    Image(systemName: systemImage)
+                }
+                Text(title)
+            }
+        }
+        .disabled(isLoadingHandsFree)
     }
 
     @ViewBuilder
@@ -185,14 +191,27 @@ struct FolderListView: View {
 
     @ViewBuilder
     private var addFolderBottomButton: some View {
-        Button {
-            showAddFolder = true
-        } label: {
-            Label("Ordner hinzufügen", systemImage: "folder.badge.plus")
-                .frame(maxWidth: .infinity)
+        // Ohne die Caption ist für den User nicht erkennbar, WARUM der Button
+        // ausgegraut ist, sobald der 1 Ordner (Hard-Limit) schon existiert –
+        // wird nur bei isFull eingeblendet, um den Normalfall nicht unnötig
+        // vollzutexten.
+        VStack(spacing: 4) {
+            Button {
+                showAddFolder = true
+            } label: {
+                Label("Ordner hinzufügen", systemImage: "folder.badge.plus")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(isFull)
+
+            if isFull {
+                Text("Maximal 1 Ordner pro Account – lege stattdessen beliebig viele Unterordner darin an.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
         }
-        .buttonStyle(.borderedProminent)
-        .disabled(isFull)
         .padding()
     }
 

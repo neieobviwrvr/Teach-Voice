@@ -43,8 +43,8 @@ struct SessionSummaryView: View {
                         VStack(alignment: .leading, spacing: 10) {
                             ForEach(results) { entry in
                                 HStack(alignment: .top, spacing: 8) {
-                                    Image(systemName: entry.isCorrect ? "checkmark.circle.fill" : "xmark.circle.fill")
-                                        .foregroundStyle(entry.isCorrect ? .green : .red)
+                                    Image(systemName: icon(for: entry))
+                                        .foregroundStyle(color(for: entry))
                                     VStack(alignment: .leading, spacing: 2) {
                                         Text(entry.question).font(.caption).lineLimit(2)
                                         Text("\(entry.label) – \(Int(entry.percent.rounded()))%")
@@ -76,6 +76,27 @@ struct SessionSummaryView: View {
                 }
             }
             .padding()
+        }
+    }
+
+    // Bewusst über das `label` (nicht nur `isCorrect`) unterschieden: sonst
+    // fällt "teilweise richtig" optisch mit "komplett falsch" zusammen (beide
+    // isCorrect == false), obwohl der Rest der App (StudyView,
+    // HandsFreeStudyView) dafür konsequent eine eigene dritte Farbe/Icon
+    // (orange, halb gefüllter Kreis) verwendet.
+    private func icon(for entry: SessionResultEntry) -> String {
+        switch entry.label {
+        case "Richtig": return "checkmark.circle.fill"
+        case "Teilweise richtig": return "circle.lefthalf.filled"
+        default: return "xmark.circle.fill"
+        }
+    }
+
+    private func color(for entry: SessionResultEntry) -> Color {
+        switch entry.label {
+        case "Richtig": return .green
+        case "Teilweise richtig": return .orange
+        default: return .red
         }
     }
 }
