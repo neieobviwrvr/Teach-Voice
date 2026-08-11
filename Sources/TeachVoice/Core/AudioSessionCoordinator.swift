@@ -12,11 +12,12 @@ import AVFoundation
 /// dieselbe Konfiguration auf, bevor sie loslegen:
 ///
 /// - `.playAndRecord`: die einzige Kategorie, die gleichzeitiges Abspielen
-///   UND Aufnehmen überhaupt erlaubt.
-/// - `.voiceChat`: aktiviert Apples eingebaute Echo-Unterdrückung (AEC).
-///   Ohne die würde das Mikrofon die eigene TTS-Ausgabe aus dem Lautsprecher
-///   mit aufnehmen und sowohl die adaptive Stille-Erkennung als auch die
-///   Transkription verwirren.
+///   UND Aufnehmen überhaupt erlaubt -- das allein reicht schon für Barge-in
+///   (Aufnahme läuft, während TTS noch spielt), unabhängig vom Modus unten.
+/// - `.measurement` (NICHT `.voiceChat`!): siehe ausführliche Begründung
+///   unten -- kurz: `.voiceChat` hätte Echo-Unterdrückung gebracht, hat aber
+///   live die Stille-Erkennung komplett kaputt gemacht, deshalb bewusst
+///   wieder zurückgestellt.
 /// - `.defaultToSpeaker`: OHNE diese Option leitet `.playAndRecord` auf dem
 ///   iPhone die Wiedergabe auf den kleinen Hörmuschel-Lautsprecher statt den
 ///   Hauptlautsprecher um -- eine leicht zu übersehende Falle.
@@ -29,16 +30,25 @@ import AVFoundation
 /// ganze Lern-/Hands-free-Sitzung endet (siehe `stopEverything()` in den
 /// jeweiligen Views).
 ///
-/// WICHTIG: dieser gesamte Barge-in-Mechanismus (gleichzeitiges
-/// Abspielen+Aufnehmen, Echo-Unterdrückung, adaptive Stille-Schwelle
-/// während laufender Wiedergabe) ließ sich hier NICHT auf einem echten Gerät
-/// verifizieren (kein Mac/Simulator in dieser Umgebung) -- Simon sollte das
-/// nach dem nächsten Build gezielt gegenprüfen, das ist der unsicherste Teil
-/// dieser Änderung.
+/// ZURÜCKGESTELLT von `.voiceChat` auf `.measurement` (Simon meldete: Stille-
+/// Erkennung im Voice-only-Modus funktionierte nach dem `.voiceChat`-Wechsel
+/// gar nicht mehr): `.voiceChat` schaltet neben Echo-Unterdrückung IMMER
+/// zusätzlich Apples Automatic Gain Control + Rauschunterdrückung ein -- das
+/// normalisiert leise Umgebungsgeräusche aktiv nach oben, wodurch die
+/// Kalibrierung (`AudioRecorder.recordUntilSilence`, erste Sekunde) eine viel
+/// zu hohe Schwelle berechnen konnte, die selbst echte Sprache nie mehr
+/// eindeutig überschritt -- die App erkannte dann nie "User spricht" und
+/// hörte bis zum 45s-Sicherheitsnetz einfach durch. `.measurement` liefert
+/// dagegen die rohen, unverfälschten dB-Werte, auf die der ganze Kalibrierungs-
+/// /Schwellwert-Algorithmus ausgelegt ist. Der Preis: keine Echo-Unterdrückung
+/// mehr -- läuft die TTS-Ansage noch, während bereits aufgenommen wird, hört
+/// das Mikrofon sie roh mit (kein Cancelling). Bewusster Kompromiss:
+/// verlässliche Stille-Erkennung wiegt schwerer als perfekt echofreies
+/// Barge-in, das sich hier ohne echtes Gerät ohnehin nicht fein justieren ließ.
 enum AudioSessionCoordinator {
     static func activate() {
         let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .voiceChat, options: [.duckOthers, .defaultToSpeaker, .allowBluetooth])
+        try? session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker, .allowBluetooth])
         try? session.setActive(true)
     }
 
