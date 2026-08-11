@@ -95,24 +95,40 @@ final class SpeechService: NSObject, ObservableObject {
     /// 0. Hat der User in `VoicePickerView` manuell eine Stimme gewählt
     ///    (`VoicePreference.selectedIdentifier`), hat die immer Vorrang --
     ///    ein ungültig gewordener Identifier (z.B. Stimme zwischenzeitlich
-    ///    wieder gelöscht) liefert `nil` und fällt automatisch auf 1. zurück.
-    /// 1. Eine Siri-Stimme, falls unter Einstellungen -> Bedienungshilfen ->
-    ///    Gesprochener Inhalt -> Stimmen heruntergeladen (Simons Fall: "Siri
-    ///    Stimme 2") -- diese sind inzwischen auch für Drittanbieter-Apps über
-    ///    `AVSpeechSynthesisVoice.speechVoices()` nutzbar, nicht mehr
-    ///    Siri selbst vorbehalten. Bewusst über den Namen/die Kennung
-    ///    gesucht statt eine feste ID hart zu hinterlegen -- die kann sich je
-    ///    nach iOS-Version/Region unterscheiden, und so wird automatisch
-    ///    genau die eine gefunden, die tatsächlich heruntergeladen ist.
-    /// 2. Sonst die beste andere heruntergeladene Enhanced/Premium-Stimme.
-    /// 3. Sonst Apples Standard-Kompaktstimme (immer verfügbar, auch ganz
-    ///    ohne jeden manuellen Download) als letzter Fallback.
+    ///    wieder gelöscht) liefert `nil` und fällt automatisch auf `automaticVoice` zurück.
     static func preferredVoice(languageCode: String) -> AVSpeechSynthesisVoice? {
         if let identifier = VoicePreference.selectedIdentifier,
            let manual = AVSpeechSynthesisVoice(identifier: identifier) {
             return manual
         }
+        return automaticVoice(languageCode: languageCode)
+    }
 
+    /// Die "Automatisch"-Kaskade OHNE die manuelle Auswahl aus
+    /// `VoicePreference` -- eigenständig aufrufbar, damit `VoicePickerView`
+    /// neben "Automatisch (empfohlen)" anzeigen kann, welche Stimme das
+    /// GERADE konkret bedeutet (Simons Verwirrung: "die App arbeitet immer
+    /// noch mit der schlechten Stimme" -- ohne diese Transparenz lässt sich
+    /// nicht unterscheiden, ob "Automatisch" die neue Stimme übersieht, oder
+    /// ob eigentlich noch eine ALTE manuelle Auswahl aktiv ist).
+    ///
+    /// 1. Eine Siri-Stimme, falls unter Einstellungen -> Bedienungshilfen ->
+    ///    Gesprochener Inhalt -> Stimmen heruntergeladen -- diese sind
+    ///    inzwischen auch für Drittanbieter-Apps über
+    ///    `AVSpeechSynthesisVoice.speechVoices()` nutzbar, nicht mehr Siri
+    ///    selbst vorbehalten. Bewusst über den Namen/die Kennung gesucht
+    ///    statt eine feste ID hart zu hinterlegen -- die kann sich je nach
+    ///    iOS-Version/Region unterscheiden. Sind MEHRERE Siri-Stimmen
+    ///    heruntergeladen (z.B. Stimme 2 UND Stimme 3), wird die erste in
+    ///    der vom System gelieferten Reihenfolge genommen -- es gibt keine
+    ///    API, um "die neueste" oder "die beste" zu unterscheiden, alle
+    ///    Siri-Stimmen sind gleich hochwertig, nur unterschiedliche
+    ///    Personas. Wer eine BESTIMMTE will, wählt sie in `VoicePickerView`
+    ///    explizit aus, statt sich auf "Automatisch" zu verlassen.
+    /// 2. Sonst die beste andere heruntergeladene Enhanced/Premium-Stimme.
+    /// 3. Sonst Apples Standard-Kompaktstimme (immer verfügbar, auch ganz
+    ///    ohne jeden manuellen Download) als letzter Fallback.
+    static func automaticVoice(languageCode: String) -> AVSpeechSynthesisVoice? {
         let candidates = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == languageCode }
 
         if let siri = candidates.first(where: {

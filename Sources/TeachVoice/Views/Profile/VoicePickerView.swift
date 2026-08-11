@@ -21,6 +21,19 @@ struct VoicePickerView: View {
     // EINER Stimme ALLE Zeilen gleichzeitig das "spielt ab"-Icon zeigen.
     @State private var playingIdentifier: String?
 
+    // `AVSpeechSynthesisVoice.speechVoices()` cached auf iOS bekanntermaßen
+    // INNERHALB eines laufenden App-Prozesses -- eine gerade in den
+    // Einstellungen heruntergeladene Stimme taucht oft erst nach einem
+    // ECHTEN Neustart der App auf, nicht schon beim bloßen Zurückkehren aus
+    // dem Hintergrund. `voices`/`resolvedAutomaticVoiceName` rufen die API
+    // zwar bei JEDEM `body`-Durchlauf frisch auf (kein eigenes Caching
+    // dieser View), aber SwiftUI ruft `body` nur neu auf, wenn sich
+    // beobachteter State ändert -- `refreshTrigger` erzwingt genau das, über
+    // `.id(refreshTrigger)` auf der Liste, sowohl beim Zurückkehren aus dem
+    // Hintergrund (`scenePhase`) als auch manuell (Pull-to-Refresh + Button).
+    @State private var refreshTrigger = UUID()
+    @Environment(\.scenePhase) private var scenePhase
+
     private let sampleText = "So klingt diese Stimme beim Vorlesen deiner Karteikarten."
 
     // Nur deutsche Sprachvarianten (de-DE/de-AT/de-CH) -- die App liest
@@ -37,6 +50,16 @@ struct VoicePickerView: View {
             }
     }
 
+    /// Zeigt an, welche Stimme "Automatisch" GERADE konkret bedeutet -- ruft
+    /// exakt dieselbe Kaskade wie `SpeechService.preferredVoice` auf (ohne
+    /// die manuelle Auswahl, die ist hier ja explizit nicht aktiv). Macht
+    /// sichtbar, ob eine neu heruntergeladene Stimme schon erkannt wird,
+    /// statt raten zu müssen.
+    private var resolvedAutomaticVoiceName: String {
+        let languageCode = Locale.preferredLanguages.first ?? "de-DE"
+        return SpeechService.automaticVoice(languageCode: languageCode)?.name ?? "Standardstimme"
+    }
+
     var body: some View {
         List {
             Section {
@@ -51,6 +74,8 @@ struct VoicePickerView: View {
                 }
             } header: {
                 Text("Deutsche Stimmen auf diesem Gerät")
+            } footer: {
+                Text("Fehlt eine gerade heruntergeladene Stimme? Zieh die Liste nach unten zum Aktualisieren -- hilft das nicht, starte die App einmal KOMPLETT neu (aus der App-Übersicht wegwischen, nicht nur in den Hintergrund schicken). iOS aktualisiert die Stimmenliste manchmal erst dann.")
             }
 
             Section {
@@ -71,8 +96,27 @@ struct VoicePickerView: View {
                 Text("Öffnet die App-Einstellungsseite. Weitere Stimmen lädst du von dort über Einstellungen -> Bedienungshilfen -> Gesprochener Inhalt -> Stimmen herunter (Apple erlaubt Apps keinen direkten Sprung zu diesem Untermenü).")
             }
         }
+        .id(refreshTrigger)
         .navigationTitle("Vorlesestimme")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    refreshTrigger = UUID()
+                } label: {
+                    Label("Aktualisieren", systemImage: "arrow.clockwise")
+                }
+            }
+        }
+        .refreshable { refreshTrigger = UUID() }
+        .onChange(of: scenePhase) { _, newPhase in
+            // Fängt den Fall ab, in dem der User über "Einstellungen öffnen"
+            // (s.u.) eine Stimme herunterlädt und per App-Wechsler zurückkommt
+            // (kein kompletter Neustart) -- ob das reicht, damit iOS die
+            // Stimmenliste wirklich aktualisiert, ließ sich hier ohne Gerät
+            // nicht verifizieren, daher zusätzlich Pull-to-Refresh + Button.
+            if newPhase == .active { refreshTrigger = UUID() }
+        }
         .onDisappear {
             previewSpeech.stop()
             AudioSessionCoordinator.deactivate()
@@ -92,6 +136,7 @@ struct VoicePickerView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Automatisch (empfohlen)").font(.body)
+                    Text("Aktuell: \(resolvedAutomaticVoiceName)").font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer()
                 if selectedIdentifier == nil {
