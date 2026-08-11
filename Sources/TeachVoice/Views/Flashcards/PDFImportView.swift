@@ -22,6 +22,11 @@ struct PDFImportView: View {
     @State private var showFilePicker = false
     @State private var selectedURLs: [URL] = []
     @State private var subfolderName = ""
+    // Default bewusst "kompakt" -- die sicherere Seite angesichts des
+    // Problems, das diese Auswahl überhaupt ausgelöst hat (zu lange, ~50
+    // Wörter lange Musterantworten). Kann jederzeit vor dem Tap auf einen
+    // der Anzahl-Buttons auf "umfassend" umgestellt werden.
+    @State private var answerStyle: AnswerStyle = .kompakt
     @State private var isProcessing = false
     @State private var processingStatus = ""
     @State private var hasGenerated = false
@@ -175,6 +180,17 @@ struct PDFImportView: View {
             }
             .padding(.horizontal)
 
+            Divider().padding(.vertical, 4)
+            Text("Wie sollen die Musterantworten sein?")
+                .font(.headline)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal)
+            HStack(spacing: 12) {
+                styleButton(.kompakt)
+                styleButton(.umfassend)
+            }
+            .padding(.horizontal)
+
             Spacer()
             Text("Wie viele Fragen sollen (pro Datei) generiert werden?")
                 .font(.headline)
@@ -194,6 +210,26 @@ struct PDFImportView: View {
     }
 
     private var isNameValid: Bool { !subfolderName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+
+    private func styleButton(_ style: AnswerStyle) -> some View {
+        let isSelected = answerStyle == style
+        return Button {
+            answerStyle = style
+        } label: {
+            VStack(spacing: 2) {
+                Text(style.label).font(.subheadline.bold())
+                Text(style.subtitle).font(.caption2)
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.bordered)
+        .tint(isSelected ? .accentColor : .secondary)
+        .overlay(
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? Color.accentColor : Color.clear, lineWidth: 2)
+        )
+    }
 
     private func countButton(label: String, subtitle: String, value: Int) -> some View {
         Button {
@@ -252,7 +288,7 @@ struct PDFImportView: View {
                 do {
                     let token = await auth.validAccessToken()
                     let generated = try await QuestionGenerationService.generate(
-                        text: extraction.text, maxQuestions: maxPerFile, accessToken: token
+                        text: extraction.text, maxQuestions: maxPerFile, answerStyle: answerStyle, accessToken: token
                     )
                     collected.append(contentsOf: generated.map {
                         ReviewCandidate(question: $0, sourceFileName: url.lastPathComponent)

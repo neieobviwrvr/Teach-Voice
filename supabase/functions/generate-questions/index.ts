@@ -38,9 +38,16 @@ const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+/// Steuert Länge/Komplexität der generierten Musterantworten. "kompakt" ist
+/// der sichere Default (siehe unten) -- Simon hat explizit beobachtet, dass
+/// PDF-generierte Antworten locker auf ~50 Wörter kamen, was für eine laut
+/// auswendig aufgesagte Karteikarten-Antwort zu lang ist.
+type AnswerStyle = "kompakt" | "umfassend";
+
 interface GenerateRequest {
   text: string;
   maxQuestions: number;
+  answerStyle?: string;
 }
 
 interface GeneratedQuestion {
@@ -80,7 +87,12 @@ Deno.serve(async (req: Request) => {
     const requested = Math.floor(body.maxQuestions ?? 12);
     const maxQuestions = Math.min(Math.max(requested, 1), MAX_QUESTIONS_CEILING);
 
-    const fragen = await generateQuestions(body.text, maxQuestions);
+    // Unbekannter/fehlender Wert faellt auf "kompakt" zurueck -- das ist die
+    // sicherere Seite angesichts des Problems, das diese Option ueberhaupt
+    // ausgeloest hat (zu lange Antworten).
+    const answerStyle: AnswerStyle = body.answerStyle === "umfassend" ? "umfassend" : "kompakt";
+
+    const fragen = await generateQuestions(body.text, maxQuestions, answerStyle);
     const response: GenerateResponse = { fragen };
     return jsonResponse(response, 200);
   } catch (err) {
@@ -124,7 +136,24 @@ async function callOpenAI(prompt: string): Promise<string> {
   return json.choices[0].message.content as string;
 }
 
-async function generateQuestions(text: string, maxQuestions: number): Promise<GeneratedQuestion[]> {
+// Konkrete Wortzahl-Vorgabe statt vager Adjektive ("kurz", "ausführlich") --
+// GPT haelt sich an harte Zahlen deutlich zuverlaessiger als an "prägnant".
+const STYLE_INSTRUCTIONS: Record<AnswerStyle, string> = {
+  kompakt: `Die Musterantwort MUSS extrem kompakt sein: maximal 20-25 Wörter, gerne auch
+weniger. Nur die eine wichtigste Kernaussage, keine Nebensätze, keine Aufzählung mehrerer
+Aspekte, keine Beispiele. Ziel: in wenigen Sekunden laut auswendig aufsagbar.`,
+  umfassend: `Die Musterantwort darf ausführlicher sein und auch komplexere Fachbegriffe
+präzise benennen, als Richtwert etwa 40-60 Wörter (harte Obergrenze: 80). Trotzdem muss sie
+klar strukturiert und realistisch auswendig lernbar bleiben -- keine Aufsatz-Antwort, sondern
+eine dichte, aber vollständige Erklärung.`,
+};
+
+async function generateQuestions(
+  text: string,
+  maxQuestions: number,
+  answerStyle: AnswerStyle
+): Promise<GeneratedQuestion[]> {
+  const styleInstruction = STYLE_INSTRUCTIONS[answerStyle];
   const prompt = `Du bekommst einen Auszug aus Vorlesungsfolien (aus einem PDF extrahiert – daher ggf.
 mit unsauberen Zeilenumbrüchen/Leerzeichen aus Tabellen-Layouts; ignoriere solche Formatierungsreste,
 sie sind keine inhaltliche Aussage). Der Text kann durch "--- Seite N ---"-Marker in Seiten gegliedert
@@ -144,8 +173,10 @@ vorhanden sind, gib entsprechend WENIGER zurück – erfinde nichts und fülle n
 um die Zahl zu erreichen.
 
 Erstelle für jedes Konzept EINE Prüfungsfrage (Stil "Was ist...", "Erkläre...", "Nenne...", passend
-zum jeweiligen Konzept) und eine prägnante, inhaltlich korrekte Musterantwort dazu (2-4 Sätze,
-kein bloßes Stichwort).
+zum jeweiligen Konzept) und eine inhaltlich korrekte Musterantwort dazu (kein bloßes Stichwort).
+
+Vorgabe für die Musterantwort-Länge (unbedingt einhalten):
+${styleInstruction}
 
 Text:
 ${text}

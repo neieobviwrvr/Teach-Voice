@@ -1,5 +1,31 @@
 import Foundation
 
+/// Steuert Länge/Komplexität der beim PDF-Import generierten Musterantworten.
+/// Simon hat beobachtet, dass generierte Antworten locker ~50 Wörter lang
+/// wurden – zu viel für eine laut auswendig aufgesagte Karteikarten-Antwort.
+/// Muss exakt mit den in `generate-questions/index.ts` erwarteten
+/// Raw-Values ("kompakt"/"umfassend") übereinstimmen.
+enum AnswerStyle: String, CaseIterable, Identifiable {
+    case kompakt
+    case umfassend
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .kompakt: return "Einfach & kompakt"
+        case .umfassend: return "Umfassend & genau"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .kompakt: return "max. ~20–25 Wörter"
+        case .umfassend: return "ausführlicher, trotzdem lernbar"
+        }
+    }
+}
+
 /// Ein einzelner, von GPT vorgeschlagener Frage+Musterantwort-Vorschlag aus
 /// dem PDF-Import – noch nicht gespeichert, wird erst nach User-Auswahl im
 /// Review-Screen (`PDFImportView`) wirklich als Karte angelegt.
@@ -19,6 +45,7 @@ private struct GenerateResponse: Decodable {
 private struct GenerateRequestBody: Encodable {
     let text: String
     let maxQuestions: Int
+    let answerStyle: String
 }
 
 /// Ruft die zustandslose Supabase Edge Function `generate-questions` auf
@@ -29,6 +56,7 @@ enum QuestionGenerationService {
     static func generate(
         text: String,
         maxQuestions: Int,
+        answerStyle: AnswerStyle,
         accessToken: String?
     ) async throws -> [GeneratedQuestion] {
         var request = URLRequest(url: SupabaseConfig.url.appendingPathComponent("functions/v1/generate-questions"))
@@ -37,7 +65,7 @@ enum QuestionGenerationService {
         request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
         request.setValue("Bearer \(accessToken ?? SupabaseConfig.anonKey)", forHTTPHeaderField: "Authorization")
 
-        let body = GenerateRequestBody(text: text, maxQuestions: maxQuestions)
+        let body = GenerateRequestBody(text: text, maxQuestions: maxQuestions, answerStyle: answerStyle.rawValue)
         request.httpBody = try JSONEncoder().encode(body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
