@@ -180,17 +180,19 @@ struct HandsFreeSelfAssessmentStudyView: View {
             awaitingSelfAssessment = false
             pendingGradingResult = nil
 
-            statusText = "Frage wird vorgelesen…"
-            await speech.speakAndWait(FlashcardMarkdown.plainText(from: card.question))
-            if Task.isCancelled { break }
+            // Barge-in (Simons ausdrückliche Vorgabe: "Frage schon tausend Mal
+            // gehört, will vorzeitig antworten"): das Mikrofon hört schon
+            // WÄHREND die Frage noch vorgelesen wird mit, statt erst danach +
+            // fester Pause. Sobald die Aufnahme endet, bricht eine noch
+            // laufende Ansage sofort ab -- nicht-blockierendes speak() statt
+            // speakAndWait().
+            statusText = "Frage wird vorgelesen – du kannst direkt antworten…"
+            speech.speak(FlashcardMarkdown.plainText(from: card.question))
 
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            if Task.isCancelled { break }
-
-            statusText = "Höre zu… (oder \"Lösung abgeben\" tippen)"
             isListening = true
             let url = await recorder.recordUntilSilence()
             isListening = false
+            speech.stop()
 
             guard let url else {
                 if recorder.permissionDenied { break }

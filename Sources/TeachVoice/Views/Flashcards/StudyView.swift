@@ -312,6 +312,12 @@ struct StudyView: View {
             transcribedAnswer = text
             await gradeCurrentAnswer(sttText: text)
         } else {
+            // Bricht eine noch laufende Vorlese-Ansage sofort ab -- Simons
+            // ausdrückliche Vorgabe: "Frage schon tausend Mal gehört, will
+            // vorzeitig antworten". Der Button war schon vorher nicht durch
+            // isSpeaking gesperrt (man konnte also technisch schon immer
+            // während der Ansage tippen), nur stoppte das TTS bisher nicht.
+            speech.stop()
             transcribedAnswer = nil
             gradingResult = nil
             gradingError = nil

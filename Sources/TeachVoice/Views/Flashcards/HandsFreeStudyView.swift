@@ -277,10 +277,12 @@ struct HandsFreeStudyView: View {
             } else {
                 summary = "Du hast das Deck vollständig gelernt. Willst du einen anderen Unterordner lernen?"
             }
-            await speech.speakAndWait(summary)
-            if Task.isCancelled { return }
 
-            chosen = await decideNextSubfolder()
+            // NICHT mehr blockierend vorgelesen -- Barge-in (Simons Vorgabe:
+            // "schon tausend Mal gehört, will vorzeitig antworten"): das
+            // Mikrofon hört schon während dieser (teils langen) Ansage mit,
+            // siehe `askContinueViaVoice`.
+            chosen = await decideNextSubfolder(announcing: summary)
             if Task.isCancelled { return }
             guard chosen != nil else {
                 dismiss()
@@ -294,11 +296,13 @@ struct HandsFreeStudyView: View {
     /// den normalen Sprachablauf (Ja/Nein, dann Unterordner nennen) oder,
     /// falls der User stattdessen den "Anderen Unterordner wählen"-Button auf
     /// dem End-Screen tippt, direkt darüber. Was zuerst eintrifft, gewinnt.
-    private func decideNextSubfolder() async -> Subfolder? {
+    /// `announcing` ist die Rundenzusammenfassung + "Willst du weiterlernen?"
+    /// -- wird NICHT blockierend vorgelesen, siehe `askContinueViaVoice`.
+    private func decideNextSubfolder(announcing summary: String) async -> Subfolder? {
         await withCheckedContinuation { (continuation: CheckedContinuation<Subfolder?, Never>) in
             nextStepContinuation = continuation
             pendingContinueTask = Task {
-                let wantsMore = await askContinueViaVoice()
+                let wantsMore = await askContinueViaVoice(afterAnnouncing: summary)
                 if Task.isCancelled { return }
                 guard nextStepContinuation != nil else { return } // schon per Button aufgelöst
                 if wantsMore {
@@ -422,19 +426,28 @@ struct HandsFreeStudyView: View {
         }
     }
 
-    private func askContinueViaVoice() async -> Bool {
-        if let answer = await listenAndMatchYesNo() { return answer }
-        await speech.speakAndWait("Das habe ich nicht verstanden. Sag bitte ja oder nein.")
+    /// `announcement` (Rundenzusammenfassung + "Willst du weiterlernen?",
+    /// teils ein langer Satz) wird NICHT blockierend vorgelesen -- Barge-in
+    /// (Simons Vorgabe: "schon tausend Mal gehört, will vorzeitig
+    /// antworten"): das Mikrofon hört schon während der Ansage mit, siehe
+    /// `listenWhileSpeakingYesNo`.
+    private func askContinueViaVoice(afterAnnouncing announcement: String) async -> Bool {
+        if let answer = await listenWhileSpeakingYesNo(announcement) { return answer }
         if Task.isCancelled { return false }
-        if let answer = await listenAndMatchYesNo() { return answer }
+        if let answer = await listenWhileSpeakingYesNo("Das habe ich nicht verstanden. Sag bitte ja oder nein.") { return answer }
         return await presentVisualYesNoPicker()
     }
 
-    private func listenAndMatchYesNo() async -> Bool? {
+    private func listenWhileSpeakingYesNo(_ announcement: String) async -> Bool? {
+        speech.speak(announcement) // nicht-blockierend -- Mikrofon hört sofort mit
+
         statusText = "Höre zu… (ja/nein)"
         isListening = true
         let url = await recorder.recordUntilSilence(silenceTimeout: 2.5)
         isListening = false
+        speech.stop() // sobald die Aufnahme endet, eine noch laufende Ansage sofort abbrechen
+
+        if Task.isCancelled { return nil }
         guard let url else { return nil }
         guard let text = await transcriber.transcribe(audioURL: url), !text.isEmpty else { return nil }
         return SubfolderVoiceMatcher.matchYesNo(transcript: text)
@@ -470,17 +483,19 @@ struct HandsFreeStudyView: View {
             lastVerdict = nil
             lastAnswer = nil
 
-            statusText = "Frage wird vorgelesen…"
-            await speech.speakAndWait(FlashcardMarkdown.plainText(from: card.question))
-            if Task.isCancelled { break }
+            // Barge-in (Simons ausdrückliche Vorgabe: "Frage schon tausend Mal
+            // gehört, will vorzeitig antworten"): das Mikrofon hört schon
+            // WÄHREND die Frage noch vorgelesen wird mit, statt erst danach +
+            // fester Pause. Sobald die Aufnahme endet (Stille erkannt oder
+            // "Lösung abgeben" getippt), bricht eine noch laufende Ansage
+            // sofort ab -- nicht-blockierendes speak() statt speakAndWait().
+            statusText = "Frage wird vorgelesen – du kannst direkt antworten…"
+            speech.speak(FlashcardMarkdown.plainText(from: card.question))
 
-            try? await Task.sleep(nanoseconds: 1_500_000_000)
-            if Task.isCancelled { break }
-
-            statusText = "Höre zu… (oder \"Lösung abgeben\" tippen)"
             isListening = true
             let url = await recorder.recordUntilSilence()
             isListening = false
+            speech.stop()
 
             guard let url else {
                 if recorder.permissionDenied { break }
