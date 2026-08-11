@@ -2,12 +2,17 @@ import SwiftUI
 import AVFoundation
 import UIKit
 
-/// Liste aller auf DIESEM Gerät installierten deutschen TTS-Stimmen (siehe
-/// `SpeechService.preferredVoice`) -- inklusive Enhanced-/Premium-/Siri-
-/// Stimmen, falls unter Einstellungen -> Bedienungshilfen -> Gesprochener
-/// Inhalt -> Stimmen heruntergeladen. Jede Zeile hat einen Anhören-Button mit
-/// Beispielsatz, damit der User selbst hört, bevor er wählt. Auswahl ist rein
-/// lokal (`VoicePreference`, UserDefaults) -- gilt unabhängig vom Login-/
+/// Liste aller DIESER APP von iOS gemeldeten deutschen TTS-Stimmen (siehe
+/// `SpeechService.preferredVoice`) -- inklusive Enhanced-/Premium-Stimmen,
+/// falls unter Einstellungen -> Bedienungshilfen -> Gesprochener Inhalt ->
+/// Stimmen heruntergeladen UND von `AVSpeechSynthesisVoice.speechVoices()`
+/// an Drittanbieter-Apps überhaupt weitergegeben (siehe `diagnosticVoiceList`
+/// unten -- bei Simon werden z.B. die "Siri-Stimme 1-4"-Personas trotz
+/// Download NIE gemeldet, bestätigt über alle 181 vom System gemeldeten
+/// Stimmen aller Sprachen, nicht nur Deutsch: eine harte Apple-Grenze, kein
+/// Bug hier). Jede Zeile hat einen Anhören-Button mit Beispielsatz, damit
+/// der User selbst hört, bevor er wählt. Auswahl ist rein lokal
+/// (`VoicePreference`, UserDefaults) -- gilt unabhängig vom Login-/
 /// Gastmodus, wie das Vorlesen selbst.
 struct VoicePickerView: View {
     // App-weit geteilte Instanz (siehe TeachVoiceApp) statt eine eigene --
@@ -65,7 +70,7 @@ struct VoicePickerView: View {
             Section {
                 automaticRow
             } footer: {
-                Text("Wählt beim Vorlesen automatisch die beste heruntergeladene Stimme (bevorzugt Siri-/Enhanced-Qualität).")
+                Text("Wählt beim Vorlesen automatisch die beste Enhanced-/Premium-Stimme, die iOS dieser App meldet.")
             }
 
             Section {

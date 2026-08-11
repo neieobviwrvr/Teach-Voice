@@ -107,35 +107,25 @@ final class SpeechService: NSObject, ObservableObject {
     /// Die "Automatisch"-Kaskade OHNE die manuelle Auswahl aus
     /// `VoicePreference` -- eigenständig aufrufbar, damit `VoicePickerView`
     /// neben "Automatisch (empfohlen)" anzeigen kann, welche Stimme das
-    /// GERADE konkret bedeutet (Simons Verwirrung: "die App arbeitet immer
-    /// noch mit der schlechten Stimme" -- ohne diese Transparenz lässt sich
-    /// nicht unterscheiden, ob "Automatisch" die neue Stimme übersieht, oder
-    /// ob eigentlich noch eine ALTE manuelle Auswahl aktiv ist).
+    /// GERADE konkret bedeutet.
     ///
-    /// 1. Eine Siri-Stimme, falls unter Einstellungen -> Bedienungshilfen ->
-    ///    Gesprochener Inhalt -> Stimmen heruntergeladen -- diese sind
-    ///    inzwischen auch für Drittanbieter-Apps über
-    ///    `AVSpeechSynthesisVoice.speechVoices()` nutzbar, nicht mehr Siri
-    ///    selbst vorbehalten. Bewusst über den Namen/die Kennung gesucht
-    ///    statt eine feste ID hart zu hinterlegen -- die kann sich je nach
-    ///    iOS-Version/Region unterscheiden. Sind MEHRERE Siri-Stimmen
-    ///    heruntergeladen (z.B. Stimme 2 UND Stimme 3), wird die erste in
-    ///    der vom System gelieferten Reihenfolge genommen -- es gibt keine
-    ///    API, um "die neueste" oder "die beste" zu unterscheiden, alle
-    ///    Siri-Stimmen sind gleich hochwertig, nur unterschiedliche
-    ///    Personas. Wer eine BESTIMMTE will, wählt sie in `VoicePickerView`
-    ///    explizit aus, statt sich auf "Automatisch" zu verlassen.
-    /// 2. Sonst die beste andere heruntergeladene Enhanced/Premium-Stimme.
-    /// 3. Sonst Apples Standard-Kompaktstimme (immer verfügbar, auch ganz
+    /// 1. Die beste heruntergeladene Enhanced/Premium-Stimme, falls
+    ///    `AVSpeechSynthesisVoice.speechVoices()` der App überhaupt eine
+    ///    solche meldet.
+    /// 2. Sonst Apples Standard-Kompaktstimme (immer verfügbar, auch ganz
     ///    ohne jeden manuellen Download) als letzter Fallback.
+    ///
+    /// KEINE Siri-Stimmen-Sonderbehandlung mehr (gab es hier früher) --
+    /// empirisch bei Simon bestätigt (`VoicePickerView`-Diagnose-Dump: 0 von
+    /// 181 vom System gemeldeten Stimmen, über ALLE Sprachen, sind
+    /// Siri-Stimmen): Apple gibt Drittanbieter-Apps über diese API keinen
+    /// Zugriff auf die als "Siri-Stimme 1-4" gebrandeten Personas, auch
+    /// nicht nach vollständigem Download + App-Neustart. Meine frühere
+    /// Behauptung, das sei "inzwischen auch für Drittanbieter-Apps nutzbar",
+    /// war schlicht falsch.
     static func automaticVoice(languageCode: String) -> AVSpeechSynthesisVoice? {
         let candidates = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == languageCode }
 
-        if let siri = candidates.first(where: {
-            $0.name.localizedCaseInsensitiveContains("siri") || $0.identifier.localizedCaseInsensitiveContains("siri")
-        }) {
-            return siri
-        }
         if let premium = candidates.first(where: { $0.quality == .premium }) {
             return premium
         }
