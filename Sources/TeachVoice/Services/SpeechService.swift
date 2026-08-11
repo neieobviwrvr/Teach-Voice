@@ -19,11 +19,15 @@ final class SpeechService: NSObject, ObservableObject {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
     }
 
-    func speak(_ text: String, languageHint: String? = nil) {
+    /// `voice` überschreibt die normale Auto-/Präferenz-Ermittlung komplett –
+    /// nur für `VoicePickerView`s "Anhören"-Button gedacht, der GENAU DIESE
+    /// eine Stimme vorspielen will, egal was `VoicePreference`/Auto-Logik
+    /// sonst wählen würde. Normale Aufrufstellen lassen den Parameter weg.
+    func speak(_ text: String, voice: AVSpeechSynthesisVoice? = nil, languageHint: String? = nil) {
         guard !text.isEmpty else { return }
         stop()
         try? AVAudioSession.sharedInstance().setActive(true)
-        synthesizer.speak(makeUtterance(text, languageHint: languageHint))
+        synthesizer.speak(makeUtterance(text, voice: voice, languageHint: languageHint))
     }
 
     /// Für den Hands-free-Modus: wartet, bis die Frage fertig vorgelesen ist,
@@ -72,9 +76,9 @@ final class SpeechService: NSObject, ObservableObject {
         pendingContinuation = nil
     }
 
-    private func makeUtterance(_ text: String, languageHint: String?) -> AVSpeechUtterance {
+    private func makeUtterance(_ text: String, voice: AVSpeechSynthesisVoice? = nil, languageHint: String? = nil) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string: text)
-        utterance.voice = Self.preferredVoice(languageCode: languageHint ?? detectedLanguage(for: text))
+        utterance.voice = voice ?? Self.preferredVoice(languageCode: languageHint ?? detectedLanguage(for: text))
         utterance.rate = AVSpeechUtteranceDefaultSpeechRate
         return utterance
     }
@@ -85,9 +89,11 @@ final class SpeechService: NSObject, ObservableObject {
         Locale.preferredLanguages.first ?? "de-DE"
     }
 
-    /// Wählt automatisch die beste auf DIESEM Gerät bereits heruntergeladene
-    /// Stimme für die gegebene Sprache, statt blind Apples Standard-
-    /// Kompaktstimme zu nehmen:
+    /// Wählt die Stimme für die gegebene Sprache:
+    /// 0. Hat der User in `VoicePickerView` manuell eine Stimme gewählt
+    ///    (`VoicePreference.selectedIdentifier`), hat die immer Vorrang --
+    ///    ein ungültig gewordener Identifier (z.B. Stimme zwischenzeitlich
+    ///    wieder gelöscht) liefert `nil` und fällt automatisch auf 1. zurück.
     /// 1. Eine Siri-Stimme, falls unter Einstellungen -> Bedienungshilfen ->
     ///    Gesprochener Inhalt -> Stimmen heruntergeladen (Simons Fall: "Siri
     ///    Stimme 2") -- diese sind inzwischen auch für Drittanbieter-Apps über
@@ -100,6 +106,11 @@ final class SpeechService: NSObject, ObservableObject {
     /// 3. Sonst Apples Standard-Kompaktstimme (immer verfügbar, auch ganz
     ///    ohne jeden manuellen Download) als letzter Fallback.
     static func preferredVoice(languageCode: String) -> AVSpeechSynthesisVoice? {
+        if let identifier = VoicePreference.selectedIdentifier,
+           let manual = AVSpeechSynthesisVoice(identifier: identifier) {
+            return manual
+        }
+
         let candidates = AVSpeechSynthesisVoice.speechVoices().filter { $0.language == languageCode }
 
         if let siri = candidates.first(where: {

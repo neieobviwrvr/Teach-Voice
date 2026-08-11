@@ -11,7 +11,6 @@ enum LibraryMode {
 struct FolderListView: View {
     let mode: LibraryMode
 
-    @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: LibraryStore
 
     @State private var showAddFolder = false
@@ -20,6 +19,7 @@ struct FolderListView: View {
     @State private var renameText = ""
     @State private var showMicPermissionNotice = false
     @State private var isLoadingHandsFree = false
+    @State private var showProfile = false
 
     // "Hands-free (Voice only)": Unterordner-Auswahl passiert per Sprachmenü
     // INNERHALB der View – hier wird nur die Unterordner-Liste vorgeladen und
@@ -85,6 +85,9 @@ struct FolderListView: View {
             // wenn der Mikrofonzugriff erlaubt ist (STT-Lernmodus).
             .task { showMicPermissionNotice = !MicrophonePermission.isGranted }
             .refreshable { await library.loadFolders() }
+            .sheet(isPresented: $showProfile) {
+                ProfileView(mode: mode)
+            }
     }
 
     @ViewBuilder
@@ -183,8 +186,10 @@ struct FolderListView: View {
             .disabled(isFull)
         }
         ToolbarItem(placement: .topBarLeading) {
-            Button(mode == .guest ? "Gastmodus verlassen" : "Abmelden", role: .destructive) {
-                auth.leaveCurrentSession()
+            Button {
+                showProfile = true
+            } label: {
+                Label("Profil", systemImage: "person.crop.circle")
             }
         }
     }
