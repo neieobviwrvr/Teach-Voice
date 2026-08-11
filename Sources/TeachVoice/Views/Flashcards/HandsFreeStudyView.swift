@@ -59,6 +59,7 @@ struct HandsFreeStudyView: View {
     @State private var cardIndex = 0
     @State private var cardCount = 0
     @State private var lastVerdict: GradingResult.Urteil?
+    @State private var lastAnswer: String?
     @State private var isListening = false
 
     @State private var sessionResults: [SessionResultEntry] = []
@@ -143,6 +144,16 @@ struct HandsFreeStudyView: View {
                         .font(.system(size: 48))
                         .foregroundStyle(verdictColor(lastVerdict))
                         .transition(.opacity)
+                }
+
+                if let lastAnswer {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Musterantwort:").font(.caption).foregroundStyle(.secondary)
+                        Text(flashcardMarkdown: lastAnswer).font(.caption)
+                    }
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
                 }
 
                 Text(statusText)
@@ -457,6 +468,7 @@ struct HandsFreeStudyView: View {
             cardIndex = index + 1
             currentQuestion = card.question
             lastVerdict = nil
+            lastAnswer = nil
 
             statusText = "Frage wird vorgelesen…"
             await speech.speakAndWait(FlashcardMarkdown.plainText(from: card.question))
@@ -531,6 +543,7 @@ struct HandsFreeStudyView: View {
             Task { await library.recordSpacedRepetitionOutcome(for: card, urteil: urteil) }
             HapticFeedback.play(for: urteil)
             lastVerdict = urteil
+            lastAnswer = card.answer
 
             sessionResults.append(SessionResultEntry(
                 question: card.question,
