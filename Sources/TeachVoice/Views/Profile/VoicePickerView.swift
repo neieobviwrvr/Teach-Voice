@@ -79,6 +79,14 @@ struct VoicePickerView: View {
             }
 
             Section {
+                DisclosureGroup("Alle vom System gemeldeten Stimmen (Diagnose)") {
+                    diagnosticVoiceList
+                }
+            } footer: {
+                Text("Zeigt ALLES, was iOS dieser App gerade als Stimme meldet -- über alle Sprachen hinweg, ungefiltert. Hilft zu klären, ob eine fehlende Stimme (z.B. eine Siri-Stimme) wirklich nicht gemeldet wird, oder ob sie da ist und nur falsch gefiltert wird.")
+            }
+
+            Section {
                 Button {
                     openSettings()
                 } label: {
@@ -177,6 +185,28 @@ struct VoicePickerView: View {
                     .font(.title3)
             }
             .buttonStyle(.borderless)
+        }
+    }
+
+    /// Roh-Dump ALLER von `AVSpeechSynthesisVoice.speechVoices()` gemeldeten
+    /// Stimmen, unabhängig von Sprache/Filter -- reine Diagnose, um zu sehen
+    /// was iOS der App WIRKLICH meldet, statt der gefilterten `voices`-Liste
+    /// oben blind vertrauen zu müssen.
+    @ViewBuilder
+    private var diagnosticVoiceList: some View {
+        let all = AVSpeechSynthesisVoice.speechVoices()
+        let germanCount = all.filter { $0.language.hasPrefix("de") }.count
+        Text("\(all.count) Stimmen insgesamt gemeldet, davon \(germanCount) mit Sprachcode \"de*\".")
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        ForEach(all, id: \.identifier) { voice in
+            VStack(alignment: .leading, spacing: 1) {
+                Text("\(voice.name) — \(voice.language) — \(qualityLabel(voice.quality))")
+                    .font(.caption2)
+                Text(voice.identifier)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 
