@@ -389,10 +389,15 @@ struct HandsFreeStudyView: View {
 
         statusText = "Höre zu…"
         isListening = true
-        let recording = await recorder.recordUntilSilence(silenceTimeout: 3.0)
+        // onSpeechDetected: bricht die Ansage bereits im Moment des ERSTEN
+        // erkannten Wortes ab, nicht erst wenn die ganze Aufnahme fertig ist
+        // -- sonst würde eine lange Ansage über die komplette gesprochene
+        // Antwort hinweg weiterlaufen, statt sofort zu verstummen.
+        let recording = await recorder.recordUntilSilence(silenceTimeout: 3.0, onSpeechDetected: { speech.stop() })
         isListening = false
-        // Sobald wir fertig zugehört haben (Stille ODER Button-Tap), muss
-        // eine noch laufende Ansage sofort verstummen.
+        // Absicherung für den Fall, dass NICHT gesprochen, sondern nur ein
+        // Button getippt wurde (dort feuert onSpeechDetected nie) -- eine noch
+        // laufende Ansage muss auch dann sofort verstummen.
         speech.stop()
 
         if Task.isCancelled { return nil }
@@ -443,9 +448,11 @@ struct HandsFreeStudyView: View {
 
         statusText = "Höre zu… (ja/nein)"
         isListening = true
-        let url = await recorder.recordUntilSilence(silenceTimeout: 2.5)
+        // onSpeechDetected: Ansage bricht sofort ab, sobald "ja"/"nein"
+        // losgeht -- nicht erst wenn die ganze Antwort fertig ist.
+        let url = await recorder.recordUntilSilence(silenceTimeout: 2.5, onSpeechDetected: { speech.stop() })
         isListening = false
-        speech.stop() // sobald die Aufnahme endet, eine noch laufende Ansage sofort abbrechen
+        speech.stop() // Absicherung, falls gar nicht gesprochen wurde
 
         if Task.isCancelled { return nil }
         guard let url else { return nil }
@@ -486,15 +493,18 @@ struct HandsFreeStudyView: View {
             // Barge-in (Simons ausdrückliche Vorgabe: "Frage schon tausend Mal
             // gehört, will vorzeitig antworten"): das Mikrofon hört schon
             // WÄHREND die Frage noch vorgelesen wird mit, statt erst danach +
-            // fester Pause. Sobald die Aufnahme endet (Stille erkannt oder
-            // "Lösung abgeben" getippt), bricht eine noch laufende Ansage
-            // sofort ab -- nicht-blockierendes speak() statt speakAndWait().
+            // fester Pause. onSpeechDetected bricht die Ansage bereits im
+            // Moment des ERSTEN erkannten Wortes ab -- nicht erst, wenn die
+            // ganze Antwort fertig aufgenommen ist (sonst würde die Frage
+            // über die komplette Antwort hinweg weiterlaufen).
             statusText = "Frage wird vorgelesen – du kannst direkt antworten…"
             speech.speak(FlashcardMarkdown.plainText(from: card.question))
 
             isListening = true
-            let url = await recorder.recordUntilSilence()
+            let url = await recorder.recordUntilSilence(onSpeechDetected: { speech.stop() })
             isListening = false
+            // Absicherung, falls "Lösung abgeben" getippt wurde, ohne dass
+            // vorher Sprache erkannt wurde (dort feuert onSpeechDetected nie).
             speech.stop()
 
             guard let url else {

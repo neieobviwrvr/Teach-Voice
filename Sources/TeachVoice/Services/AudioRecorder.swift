@@ -107,13 +107,22 @@ final class AudioRecorder: NSObject, ObservableObject {
     /// `silenceTimeout` (z.B. 3s) genau die Leute abschneiden, die sich vor
     /// der Antwort noch kurz sammeln. `maxDuration` bleibt als Sicherheitsnetz
     /// für den Fall, dass gar nie gesprochen wird.
+    /// `onSpeechDetected` feuert GENAU EINMAL, im Moment des allerersten
+    /// Pegels über der Stille-Schwelle -- also sobald der User erkennbar zu
+    /// sprechen beginnt, nicht erst wenn die ganze Aufnahme fertig ist.
+    /// Gedacht für Barge-in (siehe `HandsFreeStudyView`): ohne dieses Signal
+    /// würde eine parallel noch laufende TTS-Ansage erst nach dem KOMPLETTEN
+    /// Aufnahmevorgang gestoppt (also unter Umständen über die ganze
+    /// gesprochene Antwort hinweg weiterlaufen), statt sofort zu verstummen,
+    /// wenn der User anfängt zu reden.
     func recordUntilSilence(
         calibrationDuration: TimeInterval = 1.0,
         silenceMargin: Float = 12.0,
         minSilenceThresholdDB: Float = -50.0,
         maxSilenceThresholdDB: Float = -20.0,
         silenceTimeout: TimeInterval = 3.0,
-        maxDuration: TimeInterval = 45.0
+        maxDuration: TimeInterval = 45.0,
+        onSpeechDetected: (() -> Void)? = nil
     ) async -> URL? {
         manualStopRequested = false
         lastRecordingDetectedSpeech = false
@@ -167,6 +176,9 @@ final class AudioRecorder: NSObject, ObservableObject {
 
             if level >= threshold {
                 // User spricht gerade (oder beginnt jetzt zu sprechen).
+                if !hasDetectedSpeech {
+                    onSpeechDetected?()
+                }
                 hasDetectedSpeech = true
                 lastRecordingDetectedSpeech = true
                 silenceElapsed = 0

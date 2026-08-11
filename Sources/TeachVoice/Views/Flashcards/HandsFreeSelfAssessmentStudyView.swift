@@ -183,15 +183,17 @@ struct HandsFreeSelfAssessmentStudyView: View {
             // Barge-in (Simons ausdrückliche Vorgabe: "Frage schon tausend Mal
             // gehört, will vorzeitig antworten"): das Mikrofon hört schon
             // WÄHREND die Frage noch vorgelesen wird mit, statt erst danach +
-            // fester Pause. Sobald die Aufnahme endet, bricht eine noch
-            // laufende Ansage sofort ab -- nicht-blockierendes speak() statt
-            // speakAndWait().
+            // fester Pause. onSpeechDetected bricht die Ansage bereits im
+            // Moment des ERSTEN erkannten Wortes ab -- nicht erst, wenn die
+            // ganze Antwort fertig aufgenommen ist.
             statusText = "Frage wird vorgelesen – du kannst direkt antworten…"
             speech.speak(FlashcardMarkdown.plainText(from: card.question))
 
             isListening = true
-            let url = await recorder.recordUntilSilence()
+            let url = await recorder.recordUntilSilence(onSpeechDetected: { speech.stop() })
             isListening = false
+            // Absicherung, falls "Lösung abgeben" getippt wurde, ohne dass
+            // vorher Sprache erkannt wurde.
             speech.stop()
 
             guard let url else {
