@@ -34,7 +34,11 @@ import { checkRateLimit, resolveIdentity } from "../_shared/rateLimit.ts";
 const OPENAI_MODEL = "gpt-4o-mini";
 const THRESHOLD_RICHTIG = 65; // % Kernelement-Deckung ab der "richtig" gilt
 const THRESHOLD_TEILWEISE = 45; // % Deckung ab der "teilweise" gilt (darunter: "falsch")
-const RATE_LIMIT_MAX_PER_HOUR = 60; // grosszügig für aktive Lernsessions, deckelt aber Spam-Skripte
+// 150 statt anfangs 60: ein voller Durchlauf durch einen randvollen 50-Karten-
+// Ordner ("Alle Unterordner lernen") plus direkt "Wiederholen" danach sind
+// schon 100 Calls in einer Session -- 60 war fuers echte intensive
+// Klausur-Lernen zu knapp (Simons Einwand).
+const RATE_LIMIT_MAX_PER_HOUR = 150;
 const MAX_QUESTION_LENGTH = 5_000;
 const MAX_ANSWER_LENGTH = 5_000;
 const MAX_STT_LENGTH = 10_000;

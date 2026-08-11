@@ -25,7 +25,10 @@ import { checkRateLimit, resolveIdentity } from "../_shared/rateLimit.ts";
 const OPENAI_MODEL = "gpt-4o-mini";
 const MAX_QUESTIONS_CEILING = 25; // muss mit maxFlashcardsPerSubfolder (Models.swift) übereinstimmen
 const MAX_TEXT_LENGTH = 80_000; // muss mit PDFTextExtractor.characterCap (Swift) übereinstimmen
-const RATE_LIMIT_MAX_PER_HOUR = 20; // seltener genutzt als grade-answer, entsprechend enger
+// 40 statt anfangs 20: eine ganze Vorlesung wochenweise als eigene
+// Unterordner zu importieren (z.B. 13 Wochen laut Simons Beispiel-Syllabus)
+// sind schon 13+ Import-Aktionen in einer Sitzung -- 20 war dafuer zu eng.
+const RATE_LIMIT_MAX_PER_HOUR = 40;
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
