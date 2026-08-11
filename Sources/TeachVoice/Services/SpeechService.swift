@@ -16,7 +16,9 @@ final class SpeechService: NSObject, ObservableObject {
     override init() {
         super.init()
         synthesizer.delegate = self
-        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio, options: [.duckOthers])
+        // Kategorie wird NICHT mehr hier fest gesetzt, sondern einheitlich
+        // über AudioSessionCoordinator -- siehe dortige Doku, Grund ist
+        // Barge-in (Mikrofon hört schon während einer laufenden Ansage mit).
     }
 
     /// `voice` überschreibt die normale Auto-/Präferenz-Ermittlung komplett –
@@ -26,7 +28,7 @@ final class SpeechService: NSObject, ObservableObject {
     func speak(_ text: String, voice: AVSpeechSynthesisVoice? = nil, languageHint: String? = nil) {
         guard !text.isEmpty else { return }
         stop()
-        try? AVAudioSession.sharedInstance().setActive(true)
+        AudioSessionCoordinator.activate()
         synthesizer.speak(makeUtterance(text, voice: voice, languageHint: languageHint))
     }
 
@@ -56,7 +58,7 @@ final class SpeechService: NSObject, ObservableObject {
         guard !nonEmpty.isEmpty else { return }
         stop()
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-            try? AVAudioSession.sharedInstance().setActive(true)
+            AudioSessionCoordinator.activate()
             for (index, text) in nonEmpty.enumerated() {
                 let utterance = makeUtterance(text, languageHint: languageHint)
                 if index < nonEmpty.count - 1 {

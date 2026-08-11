@@ -11,8 +11,11 @@ struct StudyView: View {
     // StudyView neu erzeugt – sonst würde das Whisper-Modell bei jedem
     // "Lernen starten" erneut vorbereitet/heruntergeladen.
     @EnvironmentObject private var transcriber: WhisperTranscriber
+    // App-weit geteilte Instanz (siehe TeachVoiceApp) statt pro View neu
+    // erzeugt -- garantiert, dass nie zwei Voice-Lines gleichzeitig hörbar
+    // sind, auch nicht über Screen-Grenzen hinweg.
+    @EnvironmentObject private var speech: SpeechService
 
-    @StateObject private var speech = SpeechService()
     @StateObject private var recorder = AudioRecorder()
 
     @State private var index = 0
@@ -131,7 +134,10 @@ struct StudyView: View {
         // die Whisper-Vorbereitung warten musste.
         .task { if let card = currentCard { speech.speak(FlashcardMarkdown.plainText(from: card.question)) } }
         .task { await transcriber.prepareIfNeeded() }
-        .onDisappear { speech.stop() }
+        .onDisappear {
+            speech.stop()
+            AudioSessionCoordinator.deactivate()
+        }
         .alert("Mikrofonzugriff benötigt", isPresented: $recorder.permissionDenied) {
             Button("Zugriff erlauben") { MicrophonePermission.requestOrOpenSettings() }
             Button("Später", role: .cancel) {}

@@ -21,8 +21,11 @@ struct HandsFreeSelfAssessmentStudyView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var transcriber: WhisperTranscriber
     @Environment(\.dismiss) private var dismiss
+    // App-weit geteilte Instanz (siehe TeachVoiceApp) statt pro View neu
+    // erzeugt -- garantiert, dass nie zwei Voice-Lines gleichzeitig hörbar
+    // sind, auch nicht über Screen-Grenzen hinweg.
+    @EnvironmentObject private var speech: SpeechService
 
-    @StateObject private var speech = SpeechService()
     @StateObject private var recorder = AudioRecorder()
 
     @State private var index = 0
@@ -286,6 +289,7 @@ struct HandsFreeSelfAssessmentStudyView: View {
     private func stopEverything() {
         speech.stop()
         if recorder.isRecording { _ = recorder.stopRecording() }
+        AudioSessionCoordinator.deactivate()
         loopTask?.cancel()
         loopTask = nil
         // `selfAssessmentContinuation` bewusst NICHT hier mitauflösen: ein

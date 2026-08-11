@@ -13,6 +13,13 @@ final class AudioRecorder: NSObject, ObservableObject {
     /// die automatische Stille-Erkennung unzuverlässig macht (z.B. schwankender
     /// Lärmpegel) – z.B. per "Lösung abgeben"-Button gesetzt.
     private var manualStopRequested = false
+    /// Ergebnis der LETZTEN `recordUntilSilence`-Aufnahme: wurde überhaupt
+    /// einmal ein Pegel über der Stille-Schwelle gemessen? Erlaubt Aufrufern
+    /// (siehe `HandsFreeStudyView.listenWhileSpeakingAndArbitrate`), eine
+    /// teure Transkription zu überspringen, wenn der User erkennbar gar
+    /// nichts gesagt hat (z.B. weil er nur einen Button getippt hat) --
+    /// spart in genau diesem Fall die Whisper-Latenz.
+    private(set) var lastRecordingDetectedSpeech = false
 
     func requestManualStop() {
         manualStopRequested = true
@@ -32,9 +39,11 @@ final class AudioRecorder: NSObject, ObservableObject {
             return false
         }
 
-        let session = AVAudioSession.sharedInstance()
-        try? session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers])
-        try? session.setActive(true)
+        // Einheitlich über AudioSessionCoordinator statt einer eigenen,
+        // abweichenden Kategorie/Modus -- sonst würde eine gleichzeitig
+        // laufende TTS-Ansage (Barge-in, siehe HandsFreeStudyView) durch das
+        // Umschalten hier unterbrochen bzw. falsch geroutet.
+        AudioSessionCoordinator.activate()
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("answer-\(UUID().uuidString).wav")
         let settings: [String: Any] = [
@@ -64,10 +73,18 @@ final class AudioRecorder: NSObject, ObservableObject {
     }
 
     /// Stoppt die Aufnahme und liefert die Datei-URL für die Transkription.
+    ///
+    /// Deaktiviert die AVAudioSession bewusst NICHT mehr hier (anders als
+    /// früher) -- seit Barge-in (gleichzeitiges TTS+STT, siehe
+    /// AudioSessionCoordinator) könnte eine parallel noch laufende Ansage
+    /// genau dadurch abgewürgt werden, und häufiges Aktivieren/Deaktivieren
+    /// zwischen einzelnen Aufnahmen kann hörbare Klicks verursachen. Die
+    /// Session wird stattdessen erst beim echten Verlassen einer Lern-/
+    /// Hands-free-Sitzung freigegeben (`AudioSessionCoordinator.deactivate()`
+    /// in den jeweiligen `stopEverything()`).
     func stopRecording() -> URL? {
         recorder?.stop()
         isRecording = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
         return lastRecordingURL
     }
 
@@ -99,6 +116,7 @@ final class AudioRecorder: NSObject, ObservableObject {
         maxDuration: TimeInterval = 45.0
     ) async -> URL? {
         manualStopRequested = false
+        lastRecordingDetectedSpeech = false
         guard await beginRecording() else { return nil }
 
         let pollInterval: TimeInterval = 0.2
@@ -150,6 +168,7 @@ final class AudioRecorder: NSObject, ObservableObject {
             if level >= threshold {
                 // User spricht gerade (oder beginnt jetzt zu sprechen).
                 hasDetectedSpeech = true
+                lastRecordingDetectedSpeech = true
                 silenceElapsed = 0
             } else if hasDetectedSpeech {
                 // Stille zählt nur, nachdem der User schon mal wirklich

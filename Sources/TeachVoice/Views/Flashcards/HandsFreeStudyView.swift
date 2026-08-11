@@ -1,23 +1,37 @@
 import SwiftUI
 
 /// "Hands-free (Voice only)": rein sprachgesteuertes Lernmenü nach Simons
-/// Konzept ("Konzipierung Hands-free Modus (only voice).txt") – komplett
-/// automatisch, GPT bewertet allein, kein Antippen nötig (außer optional zum
-/// Beenden oder als Absicherung, falls Spracherkennung mal nicht klappt):
+/// Konzept ("Konzipierung Hands-free Modus (only voice).txt") – primär
+/// sprachgesteuert, GPT bewertet allein, aber NICHT ausschließlich blind:
 ///
-/// 1. TTS begrüßt und fragt, welchen Unterordner man lernen will
-/// 2. TTS zählt alle Unterordner nummeriert auf
-/// 3. Mikrofon hört Zahl oder Name -> lokaler Abgleich (`SubfolderVoiceMatcher`),
-///    bei Unklarheit einmal nachfragen, danach sichtbares Auswahl-Pop-up als
-///    Fallback (nie ein kompletter Hänger)
+/// 1. TTS begrüßt und zählt alle Unterordner nummeriert auf -- ALLE
+///    Unterordner sind dabei GLEICHZEITIG als Buttons sichtbar/antippbar auf
+///    dem Bildschirm (nicht erst als Fallback nach gescheiterter
+///    Spracherkennung, siehe `selectSubfolderViaVoice`).
+/// 2. Mikrofon hört schon WÄHREND die Ansage noch läuft mit (Barge-in, siehe
+///    `AudioSessionCoordinator`) -> lokaler Abgleich (`SubfolderVoiceMatcher`).
+///    Ein per Sprache erkannter Unterordner hat immer Vorrang vor einem
+///    gleichzeitigen Button-Tap; nur wenn die Spracherkennung nichts
+///    Verwertbares liefert, zählt der Tap (`listenWhileSpeakingAndArbitrate`).
+///    Bei Unklarheit einmal nachfragen, danach nur noch auf einen Tap warten
+///    (die Buttons sind ja die ganze Zeit schon sichtbar) -- nie ein
+///    kompletter Hänger.
+/// 3. Sobald ein Ergebnis feststeht (Sprache ODER Tap), bricht eine noch
+///    laufende Ansage sofort ab.
 /// 4. Lernschleife: Frage vorlesen -> automatische Aufnahme (Stille-Erkennung)
 ///    -> Transkription+Bewertung -> Ton (richtig/falsch; "teilweise" bekommt
 ///    bewusst KEINEN Ton, sondern 1 Extra-Sekunde Stille) -> 2,5s Pause -> weiter
 /// 5. Nach Durchlauf: TTS nennt die Statistik UND sie wird gleichzeitig sichtbar
 ///    angezeigt (ohne Buttons – Weiterlernen bleibt hier bewusst rein
 ///    sprachgesteuert), dann fragt die App per Ja/Nein, ob man weiterlernen
-///    will; bei "ja" wieder Unterordner-Auswahl wie in 2-3, bei "nein"
+///    will; bei "ja" wieder Unterordner-Auswahl wie in 1-2, bei "nein"
 ///    automatisch zurück zum Homescreen
+///
+/// TTS wird IMMER sofort abgebrochen, sobald diese View verlassen wird
+/// (Beenden-Button, Zurück-Navigation/Swipe -- siehe `.onDisappear` unten),
+/// und über die app-weit geteilte `SpeechService`-Instanz kann es nie zwei
+/// gleichzeitig hörbare Voice-Lines geben, auch nicht screen-übergreifend
+/// (siehe `TeachVoiceApp`).
 ///
 /// Für die zweite Variante mit Selbsteinschätzungs-Buttons pro Frage siehe
 /// `HandsFreeSelfAssessmentStudyView` ("Hands-free lernen (Eigenbewertung)") –
@@ -31,8 +45,11 @@ struct HandsFreeStudyView: View {
     @EnvironmentObject private var library: LibraryStore
     @EnvironmentObject private var transcriber: WhisperTranscriber
     @Environment(\.dismiss) private var dismiss
+    // App-weit geteilte Instanz (siehe TeachVoiceApp) statt pro View neu
+    // erzeugt -- garantiert, dass nie zwei Voice-Lines gleichzeitig hörbar
+    // sind, auch nicht über Screen-Grenzen hinweg.
+    @EnvironmentObject private var speech: SpeechService
 
-    @StateObject private var speech = SpeechService()
     @StateObject private var recorder = AudioRecorder()
     @StateObject private var soundPlayer = SoundEffectPlayer()
 
@@ -47,9 +64,24 @@ struct HandsFreeStudyView: View {
     @State private var sessionResults: [SessionResultEntry] = []
     @State private var showingSummary = false
 
-    // Sichtbarer Fallback-Picker, falls Sprache zweimal nicht erkannt wird –
-    // UND gleichzeitig der Weg für den manuellen "Anderen Unterordner
-    // wählen"-Button auf dem End-Screen (derselbe Picker, zwei Auslöser).
+    // Solange nicht leer, sind während der Unterordner-Auswahl ALLE Optionen
+    // direkt auf dem Bildschirm sichtbar UND antippbar (Simons ausdrückliche
+    // Vorgabe) -- nicht mehr nur als Popup-Fallback nach zwei erfolglosen
+    // Sprachversuchen wie vorher. Ein Tap während gerade zugehört wird,
+    // beendet die Aufnahme sofort (siehe `chooseViaButton`); ob am Ende
+    // wirklich der getippte oder ein per Sprache erkannter Unterordner
+    // gewinnt, entscheidet `listenWhileSpeakingAndArbitrate` (Sprache hat
+    // Vorrang, Button zählt nur als Fallback ohne verwertbaren Sprach-Treffer).
+    @State private var visibleSubfolderOptions: [Subfolder] = []
+    @State private var pendingButtonChoice: Subfolder?
+
+    // Sichtbarer Fallback-Picker für den manuellen "Anderen Unterordner
+    // wählen"-Button auf dem End-Screen (`presentVisualSubfolderPicker`) --
+    // NICHT mehr für die Sprach-Erstauswahl gebraucht, seit die Unterordner
+    // dafür jetzt durchgehend als Buttons sichtbar sind (s.o.). Derselbe
+    // `subfolderPickerContinuation` wird auch von `chooseViaButton` aufgelöst,
+    // falls gerade NUR auf einen Tap gewartet wird (letzter Schritt in
+    // `selectSubfolderViaVoice`, nach zwei erfolglosen Sprachversuchen).
     @State private var showVisualSubfolderPicker = false
     @State private var subfolderPickerContinuation: CheckedContinuation<Subfolder?, Never>?
     @State private var showVisualYesNoFallback = false
@@ -117,6 +149,10 @@ struct HandsFreeStudyView: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
 
+                if !visibleSubfolderOptions.isEmpty {
+                    subfolderOptionButtons
+                }
+
                 if isListening {
                     Button {
                         recorder.requestManualStop()
@@ -173,6 +209,36 @@ struct HandsFreeStudyView: View {
         }
     }
 
+    /// Alle Unterordner als direkt antippbare Buttons, parallel zur
+    /// Sprachauswahl sichtbar (siehe `visibleSubfolderOptions`-Kommentar).
+    private var subfolderOptionButtons: some View {
+        VStack(spacing: 8) {
+            ForEach(visibleSubfolderOptions) { option in
+                Button(option.name) {
+                    chooseViaButton(option)
+                }
+                .buttonStyle(.bordered)
+                .frame(maxWidth: .infinity)
+            }
+        }
+    }
+
+    /// Tap auf einen der sichtbaren Unterordner-Buttons während der Auswahl.
+    /// Macht ZWEI Dinge, je nachdem in welcher Phase wir gerade sind:
+    /// 1. Merkt sich die Wahl als Fallback UND beendet eine noch laufende
+    ///    Aufnahme sofort (statt bis zum natürlichen Stille-Timeout zu
+    ///    warten) -- greift während `listenWhileSpeakingAndArbitrate`.
+    /// 2. Löst direkt eine wartende Continuation auf, falls gerade NUR noch
+    ///    auf einen Tap gewartet wird (kein aktives Zuhören mehr) -- greift
+    ///    im letzten Schritt von `selectSubfolderViaVoice`, nach zwei
+    ///    erfolglosen Sprachversuchen.
+    private func chooseViaButton(_ subfolder: Subfolder) {
+        pendingButtonChoice = subfolder
+        recorder.requestManualStop()
+        subfolderPickerContinuation?.resume(returning: subfolder)
+        subfolderPickerContinuation = nil
+    }
+
     // MARK: - Sprachmenü-Ablauf
 
     private func runMenu() async {
@@ -181,10 +247,7 @@ struct HandsFreeStudyView: View {
             return
         }
 
-        await speech.speakAndWait("Hallo, welchen Unterordner willst du lernen?")
-        if Task.isCancelled { return }
-
-        var chosen = await selectSubfolderViaVoice()
+        var chosen = await selectSubfolderViaVoice(greeting: "Hallo, welchen Unterordner willst du lernen?")
         while let subfolder = chosen, !Task.isCancelled {
             showingSummary = false
             sessionResults = []
@@ -230,9 +293,12 @@ struct HandsFreeStudyView: View {
                 if wantsMore {
                     try? await Task.sleep(nanoseconds: 1_000_000_000)
                     if Task.isCancelled { return }
-                    await speech.speakAndWait("Welchen Unterordner willst du lernen?")
-                    if Task.isCancelled { return }
-                    let subfolder = await selectSubfolderViaVoice()
+                    // Summary-Screen verlassen BEVOR die Auswahl beginnt --
+                    // sonst wären die Unterordner-Buttons (nur im "else"-Zweig
+                    // von `body` gerendert) unsichtbar, obwohl
+                    // `visibleSubfolderOptions` intern schon gesetzt ist.
+                    showingSummary = false
+                    let subfolder = await selectSubfolderViaVoice(greeting: "Welchen Unterordner willst du lernen?")
                     resolveNextStep(subfolder)
                 } else {
                     resolveNextStep(nil)
@@ -253,36 +319,89 @@ struct HandsFreeStudyView: View {
         pendingContinueTask = nil
     }
 
-    /// Zählt (in der Reihenfolge TTS_2 beschreibt) alle Unterordner auf,
-    /// hört per Sprache zu, versucht bei Unklarheit einmal erneut, und
-    /// fällt danach auf das sichtbare Pop-up zurück statt zu hängen.
-    private func selectSubfolderViaVoice() async -> Subfolder? {
+    /// Zählt (in der Reihenfolge TTS beschreibt) alle Unterordner auf UND
+    /// macht sie GLEICHZEITIG als Buttons sichtbar/antippbar (Simons
+    /// ausdrückliche Vorgabe) -- nicht mehr nur als Popup-Fallback nach zwei
+    /// erfolglosen Sprachversuchen. `greeting` wird der Aufzählung voran-
+    /// gestellt, als EINE zusammenhängende, unterbrechbare Ansage (Barge-in,
+    /// siehe `listenWhileSpeakingAndArbitrate`) statt einer separaten,
+    /// blockierenden Vor-Ansage.
+    private func selectSubfolderViaVoice(greeting: String) async -> Subfolder? {
+        visibleSubfolderOptions = subfolders
+        defer { visibleSubfolderOptions = [] }
+
         let listText = subfolders.enumerated()
             .map { index, subfolder in "\(index + 1)) \(subfolder.name)" }
             .joined(separator: ". ")
-        await speech.speakAndWait(listText)
-        if Task.isCancelled { return nil }
-        try? await Task.sleep(nanoseconds: 1_000_000_000)
+        let announcement = greeting.isEmpty ? listText : "\(greeting) \(listText)"
 
-        if let match = await listenAndMatchSubfolder() {
-            return match
+        if let subfolder = await listenWhileSpeakingAndArbitrate(announcement) {
+            return subfolder
         }
-        await speech.speakAndWait("Das habe ich nicht verstanden. Bitte sag die Nummer oder den Namen des Unterordners noch einmal.")
         if Task.isCancelled { return nil }
-        if let match = await listenAndMatchSubfolder() {
-            return match
+
+        if let subfolder = await listenWhileSpeakingAndArbitrate(
+            "Das habe ich nicht verstanden. Sag die Nummer oder den Namen noch einmal, oder tippe direkt auf einen Unterordner."
+        ) {
+            return subfolder
         }
-        return await presentVisualSubfolderPicker()
+        if Task.isCancelled { return nil }
+
+        // Buttons sind die ganze Zeit sichtbar geblieben -- als letzter
+        // Schritt nur noch auf einen Tap warten, ohne weiter zuzuhören.
+        statusText = "Tippe auf einen Unterordner."
+        return await waitForButtonTapOnly()
     }
 
-    private func listenAndMatchSubfolder() async -> Subfolder? {
+    /// Startet eine Ansage (TTS) UND das Zuhören GLEICHZEITIG (Barge-in: das
+    /// Ende der Ansage muss nicht abgewartet werden, siehe
+    /// `AudioSessionCoordinator`). Ein Tap auf einen der sichtbaren
+    /// Unterordner-Buttons während der Aufnahme beendet sie sofort (statt
+    /// bis zum natürlichen Stille-Timeout zu warten, siehe `chooseViaButton`).
+    /// Sobald ein Ergebnis feststeht, wird eine noch laufende Ansage sofort
+    /// abgebrochen. Ein per Sprache erkannter Treffer hat IMMER Vorrang vor
+    /// einem gleichzeitigen Button-Tap (Simons ausdrückliche Vorgabe); nur
+    /// wenn die Spracherkennung nichts Verwertbares liefert, zählt der
+    /// zwischenzeitlich getippte Button.
+    ///
+    /// Technischer Hinweis: "sofort" heißt hier "sobald die Aufnahme endet"
+    /// (Stille erkannt ODER Button-Tap), nicht "mitten im Wort" -- Whisper
+    /// transkribiert hier den fertigen Aufnahme-Clip, keine Live-Erkennung
+    /// während des Sprechens.
+    private func listenWhileSpeakingAndArbitrate(_ announcement: String) async -> Subfolder? {
+        pendingButtonChoice = nil
+        speech.speak(announcement) // nicht-blockierend -- Mikrofon hört sofort mit, auch während die Ansage noch läuft
+
         statusText = "Höre zu…"
         isListening = true
-        let url = await recorder.recordUntilSilence(silenceTimeout: 3.0)
+        let recording = await recorder.recordUntilSilence(silenceTimeout: 3.0)
         isListening = false
-        guard let url else { return nil }
-        guard let text = await transcriber.transcribe(audioURL: url), !text.isEmpty else { return nil }
-        return SubfolderVoiceMatcher.match(transcript: text, options: subfolders)
+        // Sobald wir fertig zugehört haben (Stille ODER Button-Tap), muss
+        // eine noch laufende Ansage sofort verstummen.
+        speech.stop()
+
+        if Task.isCancelled { return nil }
+
+        var matched: Subfolder?
+        // `lastRecordingDetectedSpeech` spart die Transkription (und damit
+        // Latenz), wenn erkennbar gar nichts gesagt wurde -- z.B. weil der
+        // User nur einen Button getippt hat.
+        if let recording, recorder.lastRecordingDetectedSpeech,
+           let text = await transcriber.transcribe(audioURL: recording), !text.isEmpty {
+            matched = SubfolderVoiceMatcher.match(transcript: text, options: subfolders)
+        }
+
+        return matched ?? pendingButtonChoice
+    }
+
+    /// Letzter Schritt, falls Sprache zweimal nichts Verwertbares lieferte:
+    /// die Unterordner-Buttons sind weiterhin sichtbar (siehe
+    /// `visibleSubfolderOptions`), hier wird nur noch ohne aktives Zuhören
+    /// auf einen Tap gewartet (aufgelöst von `chooseViaButton`).
+    private func waitForButtonTapOnly() async -> Subfolder? {
+        await withCheckedContinuation { (continuation: CheckedContinuation<Subfolder?, Never>) in
+            subfolderPickerContinuation = continuation
+        }
     }
 
     private func presentVisualSubfolderPicker() async -> Subfolder? {
@@ -471,6 +590,7 @@ struct HandsFreeStudyView: View {
     private func stopEverything() {
         speech.stop()
         if recorder.isRecording { _ = recorder.stopRecording() }
+        AudioSessionCoordinator.deactivate()
         // Verwaisten Sprach-Task beenden, statt ihn im Hintergrund weiter TTS/
         // Mikrofon benutzen zu lassen, obwohl der Modus gerade verlassen wird
         // ("Beenden"-Button, Zurück-Navigation via .onDisappear).

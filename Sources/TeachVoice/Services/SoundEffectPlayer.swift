@@ -15,8 +15,11 @@ final class SoundEffectPlayer: NSObject, ObservableObject {
     /// Hands-free-Loop nicht mitten in den Ton hinein die nächste Frage stellt).
     func play(_ effect: Effect) async {
         guard let url = Bundle.main.url(forResource: effect.rawValue, withExtension: "wav") else { return }
-        try? AVAudioSession.sharedInstance().setCategory(.playback, options: [.duckOthers])
-        try? AVAudioSession.sharedInstance().setActive(true)
+        // Einheitlich über AudioSessionCoordinator statt einer eigenen
+        // .playback-Kategorie -- sonst würde die Session direkt vor dem
+        // nächsten Zuhören/Sprechen kurz auf .playback zurückspringen und
+        // wieder umgeschaltet werden müssen (Klick-Risiko, siehe dortige Doku).
+        AudioSessionCoordinator.activate()
 
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             do {

@@ -10,7 +10,11 @@ import UIKit
 /// lokal (`VoicePreference`, UserDefaults) -- gilt unabhängig vom Login-/
 /// Gastmodus, wie das Vorlesen selbst.
 struct VoicePickerView: View {
-    @StateObject private var previewSpeech = SpeechService()
+    // App-weit geteilte Instanz (siehe TeachVoiceApp) statt eine eigene --
+    // sonst hätten zwei unabhängige AVSpeechSynthesizer-Instanzen (diese
+    // Vorschau + z.B. eine parallel noch nachklingende Frage aus StudyView)
+    // tatsächlich gleichzeitig hörbar sein können.
+    @EnvironmentObject private var previewSpeech: SpeechService
     @State private var selectedIdentifier: String? = VoicePreference.selectedIdentifier
     // Getrennt von `previewSpeech.isSpeaking` (das ist nur EIN gemeinsamer
     // Bool für den ganzen Service) -- ohne dieses Feld würden beim Abspielen
@@ -69,7 +73,10 @@ struct VoicePickerView: View {
         }
         .navigationTitle("Vorlesestimme")
         .navigationBarTitleDisplayMode(.inline)
-        .onDisappear { previewSpeech.stop() }
+        .onDisappear {
+            previewSpeech.stop()
+            AudioSessionCoordinator.deactivate()
+        }
     }
 
     private func openSettings() {
