@@ -18,7 +18,10 @@ struct TeachVoiceApp: App {
     // `stop()` auf einer laufenden Ansage auf -- das schützt aber nur
     // INNERHALB einer einzigen Instanz. Mit genau einer geteilten Instanz
     // gilt die Garantie "nie zwei Voice-Lines gleichzeitig" jetzt app-weit.
-    @StateObject private var speech = SpeechService()
+    // Braucht `auth` seit dem Wechsel auf Cloud-TTS (Google Cloud, siehe
+    // CloudSpeechService) -- für den Access-Token bei eingeloggten Usern,
+    // genau wie GradingService/QuestionGenerationService ihn schon brauchen.
+    @StateObject private var speech: SpeechService
 
     init() {
         let auth = AuthManager()
@@ -27,6 +30,7 @@ struct TeachVoiceApp: App {
         // Remote (Cloud-Login) oder Local (Gastmodus) um, sobald der
         // tatsächliche Auth-Zustand feststeht.
         _library = StateObject(wrappedValue: LibraryStore(repository: LocalLibraryRepository()))
+        _speech = StateObject(wrappedValue: SpeechService(auth: auth))
     }
 
     var body: some Scene {
