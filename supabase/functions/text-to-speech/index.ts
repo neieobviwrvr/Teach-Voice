@@ -29,14 +29,19 @@
 // beliebig oft aufrufen.
 
 import { checkRateLimit, resolveIdentity } from "../_shared/rateLimit.ts";
+import { checkAndReserveGoogleCloudSpend } from "../_shared/cloudSpendGuard.ts";
 
 const GOOGLE_TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize";
 // WaveNet (nicht Standard, nicht Neural2) -- das ist die Stufe, die im
-// Google-Cloud-Freikontingent (1 Mio. Zeichen/Monat) steckt. Konkrete Stimme
-// (A-F, verschiedene Personas) noch nicht final durch Anhören bestätigt --
-// bewusst als eigene Konstante, leicht austauschbar ohne den Rest anzufassen.
-const VOICE_NAME = "de-DE-Wavenet-F";
+// Google-Cloud-Freikontingent (1 Mio. Zeichen/Monat) steckt. Live gegen
+// Googles voices:list-API verifiziert (Stand dieser Änderung): für de-DE
+// gibt es aktuell NUR de-DE-Wavenet-G (weiblich) und -H (männlich) --
+// ältere Namen wie -A bis -F tauchen dort nicht mehr auf.
+const VOICE_NAME = "de-DE-Wavenet-G";
 const LANGUAGE_CODE = "de-DE";
+// $4 pro 1 Mio. Zeichen (WaveNet-Preisstufe, siehe Chat-Historie) -- für die
+// Kostenschätzung des Spend-Guards unten.
+const PRICE_PER_CHAR_USD = 4 / 1_000_000;
 
 const MAX_TEXT_LENGTH = 2_000; // weit mehr als jede Karteikarten-Frage/Ansage braucht
 // TTS wird pro vorgelesenem Text aufgerufen (nicht nur pro Bewertung wie bei
@@ -81,6 +86,15 @@ Deno.serve(async (req: Request) => {
     }
     if (body.text.length > MAX_TEXT_LENGTH) {
       return jsonResponse({ error: `text darf maximal ${MAX_TEXT_LENGTH} Zeichen haben.` }, 400);
+    }
+
+    // Harter, sofort wirksamer Ausgaben-Deckel -- Simons ausdrückliche
+    // Vorgabe, das Google-Cloud-Testguthaben auf gar keinen Fall zu
+    // überschreiten. Läuft VOR dem eigentlichen (bezahlten) Google-Call.
+    const estimatedCost = body.text.length * PRICE_PER_CHAR_USD;
+    const spendAllowed = await checkAndReserveGoogleCloudSpend(estimatedCost);
+    if (!spendAllowed) {
+      return jsonResponse({ error: "Cloud-Sprachausgabe momentan pausiert (internes Budget-Limit erreicht)." }, 503);
     }
 
     const audioContent = await synthesize(body.text.trim());
