@@ -172,19 +172,43 @@ struct FolderListView: View {
     /// beim Öffnen der App), damit Hands-free-Buttons und Ordnerliste
     /// darunter erst durch Scrollen sichtbar werden -- Simons ausdrückliche
     /// Vorgabe. `.listRowInsets`/`.listRowBackground(.clear)` entfernen die
-    /// normale List-Zeilen-Optik, damit das freie Positionieren der
-    /// Mindmap-Knoten nicht mit dem Standard-List-Layout kollidiert.
+    /// normale List-Zeilen-Optik.
+    ///
+    /// WICHTIG (Fix nach Simons Feedback -- Pillen liefen auf dem Gerät oben
+    /// über die Nav-Bar hinaus UND links/rechts aus dem Bild): die vorherige
+    /// Version positionierte die Unterordner-Pillen per Trigonometrie
+    /// (Radius+Winkel) und `.offset()` frei in einem ZStack mit fester Höhe
+    /// (340pt) -- rein geschätzte Pixelwerte ohne echten Bezug zur
+    /// tatsächlichen Bildschirmbreite/Pillen-Textlänge, die auf schmalen
+    /// Geräten oder bei langen Unterordner-Namen zuverlässig überliefen.
+    /// `.offset()`/`.scaleEffect()` verändern nur die Darstellung, nicht die
+    /// von SwiftUI für das Layout gemeldete Größe -- das Elternview reserviert
+    /// dafür also gar keinen echten Platz.
+    ///
+    /// Jetzt: `FlowLayout` (s.u.) ist ein echtes SwiftUI-`Layout`, das die
+    /// Pillen zeilenweise umbricht und dabei NIE breiter wird als die vom
+    /// Elternview vorgegebene Breite -- garantiert unabhängig von
+    /// Bildschirmgröße/iOS-Version, weil es die tatsächlich gemessene Größe
+    /// jeder Pille verwendet statt geschätzter Radius-Werte. Die Hero-Section
+    /// hat dadurch auch keine feste Höhe mehr, sondern wächst/schrumpft mit
+    /// dem tatsächlichen Inhalt (0 Pillen bis beliebig viele).
     @ViewBuilder
     private var heroSection: some View {
         Section {
-            ZStack {
-                ForEach(Array(mindMapSubfolders.enumerated()), id: \.element.id) { index, subfolder in
-                    subfolderMindMapNode(subfolder, index: index, total: mindMapSubfolders.count)
-                }
+            VStack(spacing: 20) {
                 learnButton
+                if showFolderMindMap {
+                    FlowLayout(spacing: 8, lineSpacing: 8) {
+                        ForEach(mindMapSubfolders) { subfolder in
+                            subfolderPill(subfolder)
+                        }
+                    }
+                    .transition(.scale(scale: 0.85).combined(with: .opacity))
+                }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 340)
+            .padding(.horizontal, 16)
+            .padding(.vertical, 28)
             .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
@@ -209,23 +233,11 @@ struct FolderListView: View {
         .opacity(mindMapSubfolders.isEmpty ? 0.5 : 1)
     }
 
-    /// Ein einzelner Unterordner-Knoten, der beim Antippen von "Lernen"
-    /// mindmap-artig aus der Button-Mitte herausfährt -- gescoped auf den im
-    /// Oberordner-Dropdown gewählten Ordner (`mindMapSubfolders`). Verteilung:
-    /// ein Bogen von 180° (links) über oben bis 0° (rechts) -- bei nur einem
-    /// Unterordner landet der Knoten mittig oberhalb des Buttons; bei
-    /// mehreren fächern sie sich darüber auf (der eigentlich relevante Fall,
-    /// da Unterordner bewusst unbegrenzt sind). Radius/Höhe wurden hier ohne
-    /// echtes Gerät gewählt (kein lokaler Simulator verfügbar) -- ggf. nach
-    /// dem ersten Test noch nachjustieren.
-    private func subfolderMindMapNode(_ subfolder: Subfolder, index: Int, total: Int) -> some View {
-        let angleDegrees: Double = total <= 1 ? 0 : -90 + (180.0 / Double(total - 1)) * Double(index)
-        let angleRadians = angleDegrees * .pi / 180
-        let radius: CGFloat = 120
-        let dx = showFolderMindMap ? radius * sin(angleRadians) : 0
-        let dy = showFolderMindMap ? -radius * cos(angleRadians) : 0
-
-        return NavigationLink(value: subfolder) {
+    /// Eine einzelne Unterordner-Pille innerhalb der `FlowLayout` im
+    /// "Lernen"-Reveal -- gescoped auf den im Oberordner-Dropdown gewählten
+    /// Ordner (`mindMapSubfolders`).
+    private func subfolderPill(_ subfolder: Subfolder) -> some View {
+        NavigationLink(value: subfolder) {
             Text(subfolder.name)
                 .font(.footnote.bold())
                 .lineLimit(1)
@@ -235,13 +247,6 @@ struct FolderListView: View {
                 .overlay(Capsule().stroke(Color.accentColor.opacity(0.4), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .offset(x: dx, y: dy)
-        .scaleEffect(showFolderMindMap ? 1 : 0.01)
-        .opacity(showFolderMindMap ? 1 : 0)
-        .animation(
-            .spring(response: 0.45, dampingFraction: 0.68).delay(Double(index) * 0.06),
-            value: showFolderMindMap
-        )
     }
 
     // MARK: - Hands-free (kompakt, siehe Simons Vorgabe: verkleinert)
