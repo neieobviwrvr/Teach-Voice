@@ -88,9 +88,6 @@ struct FolderListView: View {
             .navigationDestination(for: Folder.self) { folder in
                 SubfolderListView(folder: folder)
             }
-            .navigationDestination(for: Subfolder.self) { subfolder in
-                FlashcardListView(subfolder: subfolder)
-            }
             .navigationDestination(item: $voiceOnlySubfolders) { subfolders in
                 HandsFreeStudyView(subfolders: subfolders, strictness: voiceOnlyStrictness)
             }
@@ -235,9 +232,21 @@ struct FolderListView: View {
 
     /// Eine einzelne Unterordner-Pille innerhalb der `FlowLayout` im
     /// "Lernen"-Reveal -- gescoped auf den im Oberordner-Dropdown gewählten
-    /// Ordner (`mindMapSubfolders`).
+    /// Ordner (`mindMapSubfolders`). Tippen springt DIREKT in Hands-free
+    /// (Voice only) für GENAU diesen Unterordner (Simon: "will ich direkt
+    /// ins 'Handsfree Voice only' geschickt werden, allerdings ohne die
+    /// Abfrage welcher Ordner gelernt werden soll") -- reicht dafür bewusst
+    /// dieselbe Strictness-Auswahl (`showVoiceOnlyStrictnessPicker`) und
+    /// denselben Navigations-Mechanismus (`voiceOnlySubfolders`) wie der
+    /// "Voice only"-Button in `handsFreeSection`, nur mit genau einem
+    /// vorausgewählten Unterordner statt allen. `HandsFreeStudyView`
+    /// überspringt die Sprach-Nachfrage automatisch, sobald ihr nur ein
+    /// einziger Unterordner übergeben wird (siehe `selectSubfolderViaVoice`).
     private func subfolderPill(_ subfolder: Subfolder) -> some View {
-        NavigationLink(value: subfolder) {
+        Button {
+            pendingVoiceOnlySubfolders = [subfolder]
+            showVoiceOnlyStrictnessPicker = true
+        } label: {
             Text(subfolder.name)
                 .font(.footnote.bold())
                 .lineLimit(1)

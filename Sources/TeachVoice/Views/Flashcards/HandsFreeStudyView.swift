@@ -365,6 +365,15 @@ struct HandsFreeStudyView: View {
     /// erfolglosen Sprachversuchen. `greeting` wird der Aufzählung
     /// vorangestellt, als EINE zusammenhängende Ansage.
     private func selectSubfolderViaVoice(greeting: String) async -> Subfolder? {
+        // Bei genau einem Unterordner gibt es nichts zu fragen -- wichtig für
+        // den Einstieg per Mindmap-Tap auf `FolderListView` (Simon: "direkt
+        // ins Handsfree Voice only [...] ohne die Abfrage welcher Ordner
+        // gelernt werden soll"), gilt aber allgemein: eine Frage mit nur
+        // einer möglichen Antwort ist keine echte Frage.
+        if subfolders.count == 1 {
+            return subfolders[0]
+        }
+
         visibleSubfolderOptions = subfolders
         defer { visibleSubfolderOptions = [] }
 
