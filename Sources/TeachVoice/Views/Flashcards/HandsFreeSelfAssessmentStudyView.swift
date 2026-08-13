@@ -190,7 +190,7 @@ struct HandsFreeSelfAssessmentStudyView: View {
             speech.speak(FlashcardMarkdown.plainText(from: card.question))
 
             isListening = true
-            let url = await recorder.recordUntilSilence(onSpeechDetected: { speech.stop() })
+            let url = await recorder.recordUntilSilence(onSpeechDetected: { speech.stop() }, isPlaybackActive: { speech.isSpeaking })
             isListening = false
             // Absicherung, falls "Lösung abgeben" getippt wurde, ohne dass
             // vorher Sprache erkannt wurde.

@@ -115,14 +115,32 @@ final class AudioRecorder: NSObject, ObservableObject {
     /// Aufnahmevorgang gestoppt (also unter Umständen über die ganze
     /// gesprochene Antwort hinweg weiterlaufen), statt sofort zu verstummen,
     /// wenn der User anfängt zu reden.
+    ///
+    /// `isPlaybackActive` (optional, für Barge-in): meldet, ob GERADE eine
+    /// TTS-Ansage läuft. Ohne echte Echo-Unterdrückung (siehe
+    /// `AudioSessionCoordinator` -- bewusst deaktiviert, sonst brach die
+    /// Stille-Erkennung komplett) hört das Mikrofon die eigene Ansage
+    /// zwangsläufig mit. Deshalb: solange `isPlaybackActive` true meldet,
+    /// darf die kalibrierte Schwelle deutlich höher liegen als sonst
+    /// (`maxSilenceThresholdDBWhilePlaying` statt `maxSilenceThresholdDB`) --
+    /// filtert die normale Lautstärke der eigenen Ansage heraus, während ein
+    /// User, der WIRKLICH dazwischenredet (spürbar lauter als die Ansage
+    /// selbst), trotzdem erkannt wird -- echte Unterbrechung bleibt also
+    /// möglich, nur eben nicht bei jedem kleinsten Mitschnitt der eigenen
+    /// Stimme. Endet die Ansage von selbst (ohne dass unterbrochen wurde),
+    /// wird automatisch NEU kalibriert -- sonst wäre die (an die Ansagen-
+    /// Lautstärke angepasste, oft recht hohe) Schwelle für die tatsächliche,
+    /// leisere Antwort in der jetzt wieder ruhigeren Umgebung zu hoch.
     func recordUntilSilence(
         calibrationDuration: TimeInterval = 1.0,
         silenceMargin: Float = 12.0,
         minSilenceThresholdDB: Float = -50.0,
         maxSilenceThresholdDB: Float = -20.0,
+        maxSilenceThresholdDBWhilePlaying: Float = 0.0,
         silenceTimeout: TimeInterval = 3.0,
         maxDuration: TimeInterval = 45.0,
-        onSpeechDetected: (() -> Void)? = nil
+        onSpeechDetected: (() -> Void)? = nil,
+        isPlaybackActive: (() -> Bool)? = nil
     ) async -> URL? {
         manualStopRequested = false
         lastRecordingDetectedSpeech = false
@@ -131,8 +149,10 @@ final class AudioRecorder: NSObject, ObservableObject {
         let pollInterval: TimeInterval = 0.2
         var silenceElapsed: TimeInterval = 0
         var totalElapsed: TimeInterval = 0
+        var calibrationStartElapsed: TimeInterval = 0
         var ambientSamples: [Float] = []
         var silenceThresholdDB: Float?
+        var wasPlaybackActiveLastPoll = isPlaybackActive?() ?? false
         // Wird erst true, sobald der Pegel einmal über der Stille-Schwelle
         // lag – erst dann darf `silenceElapsed` überhaupt zum Timeout führen.
         var hasDetectedSpeech = false
@@ -156,11 +176,21 @@ final class AudioRecorder: NSObject, ObservableObject {
             recorder.updateMeters()
             let level = recorder.averagePower(forChannel: 0)
             totalElapsed += pollInterval
+            let playbackActiveNow = isPlaybackActive?() ?? false
 
-            if totalElapsed <= calibrationDuration {
+            // Ansage ist GERADE (ohne Unterbrechung durch den User) zu Ende
+            // gegangen -- neu kalibrieren, siehe Doku oben.
+            if wasPlaybackActiveLastPoll && !playbackActiveNow && !hasDetectedSpeech {
+                silenceThresholdDB = nil
+                ambientSamples = []
+                calibrationStartElapsed = totalElapsed
+            }
+            wasPlaybackActiveLastPoll = playbackActiveNow
+
+            if totalElapsed - calibrationStartElapsed <= calibrationDuration {
                 // Kalibrierungsfenster: noch keine Stille-Erkennung, nur die
-                // Umgebungslautstärke sammeln (Annahme: die ersten ~1s sind
-                // noch kein Sprechbeginn, sondern Raumgeräusch).
+                // Umgebungslautstärke (bzw. bei laufender Ansage: deren
+                // eigene Lautstärke) sammeln.
                 ambientSamples.append(level)
                 continue
             }
@@ -169,13 +199,15 @@ final class AudioRecorder: NSObject, ObservableObject {
                 let ambientFloor = ambientSamples.isEmpty
                     ? minSilenceThresholdDB
                     : ambientSamples.reduce(0, +) / Float(ambientSamples.count)
-                silenceThresholdDB = min(maxSilenceThresholdDB, max(minSilenceThresholdDB, ambientFloor + silenceMargin))
+                let ceiling = playbackActiveNow ? maxSilenceThresholdDBWhilePlaying : maxSilenceThresholdDB
+                silenceThresholdDB = min(ceiling, max(minSilenceThresholdDB, ambientFloor + silenceMargin))
             }
 
             guard let threshold = silenceThresholdDB else { continue }
 
             if level >= threshold {
-                // User spricht gerade (oder beginnt jetzt zu sprechen).
+                // User spricht gerade (oder beginnt jetzt zu sprechen) --
+                // bzw. bei laufender Ansage: redet spürbar lauter dazwischen.
                 if !hasDetectedSpeech {
                     onSpeechDetected?()
                 }

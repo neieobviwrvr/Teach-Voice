@@ -393,7 +393,7 @@ struct HandsFreeStudyView: View {
         // erkannten Wortes ab, nicht erst wenn die ganze Aufnahme fertig ist
         // -- sonst würde eine lange Ansage über die komplette gesprochene
         // Antwort hinweg weiterlaufen, statt sofort zu verstummen.
-        let recording = await recorder.recordUntilSilence(silenceTimeout: 3.0, onSpeechDetected: { speech.stop() })
+        let recording = await recorder.recordUntilSilence(silenceTimeout: 3.0, onSpeechDetected: { speech.stop() }, isPlaybackActive: { speech.isSpeaking })
         isListening = false
         // Absicherung für den Fall, dass NICHT gesprochen, sondern nur ein
         // Button getippt wurde (dort feuert onSpeechDetected nie) -- eine noch
@@ -450,7 +450,7 @@ struct HandsFreeStudyView: View {
         isListening = true
         // onSpeechDetected: Ansage bricht sofort ab, sobald "ja"/"nein"
         // losgeht -- nicht erst wenn die ganze Antwort fertig ist.
-        let url = await recorder.recordUntilSilence(silenceTimeout: 2.5, onSpeechDetected: { speech.stop() })
+        let url = await recorder.recordUntilSilence(silenceTimeout: 2.5, onSpeechDetected: { speech.stop() }, isPlaybackActive: { speech.isSpeaking })
         isListening = false
         speech.stop() // Absicherung, falls gar nicht gesprochen wurde
 
@@ -501,7 +501,7 @@ struct HandsFreeStudyView: View {
             speech.speak(FlashcardMarkdown.plainText(from: card.question))
 
             isListening = true
-            let url = await recorder.recordUntilSilence(onSpeechDetected: { speech.stop() })
+            let url = await recorder.recordUntilSilence(onSpeechDetected: { speech.stop() }, isPlaybackActive: { speech.isSpeaking })
             isListening = false
             // Absicherung, falls "Lösung abgeben" getippt wurde, ohne dass
             // vorher Sprache erkannt wurde (dort feuert onSpeechDetected nie).
