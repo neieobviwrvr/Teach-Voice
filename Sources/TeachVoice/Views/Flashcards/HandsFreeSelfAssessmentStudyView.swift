@@ -27,6 +27,7 @@ struct HandsFreeSelfAssessmentStudyView: View {
     @EnvironmentObject private var speech: SpeechService
 
     @StateObject private var recorder = AudioRecorder()
+    @StateObject private var soundPlayer = SoundEffectPlayer()
 
     @State private var index = 0
     @State private var statusText = "Bereit…"
@@ -180,21 +181,16 @@ struct HandsFreeSelfAssessmentStudyView: View {
             awaitingSelfAssessment = false
             pendingGradingResult = nil
 
-            // Barge-in (Simons ausdrückliche Vorgabe: "Frage schon tausend Mal
-            // gehört, will vorzeitig antworten"): das Mikrofon hört schon
-            // WÄHREND die Frage noch vorgelesen wird mit, statt erst danach +
-            // fester Pause. onSpeechDetected bricht die Ansage bereits im
-            // Moment des ERSTEN erkannten Wortes ab -- nicht erst, wenn die
-            // ganze Antwort fertig aufgenommen ist.
-            statusText = "Frage wird vorgelesen – du kannst direkt antworten…"
-            speech.speak(FlashcardMarkdown.plainText(from: card.question))
+            statusText = "Frage wird vorgelesen…"
+            await speech.speakAndWait(FlashcardMarkdown.plainText(from: card.question))
+            if Task.isCancelled { break }
+            await soundPlayer.play(.ready)
+            if Task.isCancelled { break }
 
+            statusText = "Höre zu… (oder \"Lösung abgeben\" tippen)"
             isListening = true
-            let url = await recorder.recordUntilSilence(onSpeechDetected: { speech.stop() }, isPlaybackActive: { speech.isSpeaking })
+            let url = await recorder.recordUntilSilence()
             isListening = false
-            // Absicherung, falls "Lösung abgeben" getippt wurde, ohne dass
-            // vorher Sprache erkannt wurde.
-            speech.stop()
 
             guard let url else {
                 if recorder.permissionDenied { break }

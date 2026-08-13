@@ -8,19 +8,23 @@ import SwiftUI
 ///    Unterordner sind dabei GLEICHZEITIG als Buttons sichtbar/antippbar auf
 ///    dem Bildschirm (nicht erst als Fallback nach gescheiterter
 ///    Spracherkennung, siehe `selectSubfolderViaVoice`).
-/// 2. Mikrofon hört schon WÄHREND die Ansage noch läuft mit (Barge-in, siehe
-///    `AudioSessionCoordinator`) -> lokaler Abgleich (`SubfolderVoiceMatcher`).
-///    Ein per Sprache erkannter Unterordner hat immer Vorrang vor einem
-///    gleichzeitigen Button-Tap; nur wenn die Spracherkennung nichts
-///    Verwertbares liefert, zählt der Tap (`listenWhileSpeakingAndArbitrate`).
-///    Bei Unklarheit einmal nachfragen, danach nur noch auf einen Tap warten
+/// 2. Ansage läuft KOMPLETT durch, danach ein kurzer Signalton
+///    (`SoundEffectPlayer.Effect.ready`) -- erst DANN startet das Zuhören.
+///    Bewusst NICHT mehr während der Ansage gleichzeitig (kein "Barge-in"
+///    mehr): ohne echte Echo-Unterdrückung ließ sich die eigene Stimme der
+///    App nicht zuverlässig von Umgebungslärm (z.B. vorbeifahrende Autos)
+///    unterscheiden, siehe Chat-Historie. Der Signalton ist das etablierte
+///    Muster (Alexa, Siri, Telefon-Menüs): klar, wann man dran ist, statt
+///    Rätselraten. Die Unterordner-Buttons bleiben trotzdem die GANZE Zeit
+///    (Ansage + Zuhören) sichtbar/antippbar -- ein Tap geht immer sofort,
+///    unabhängig vom Signalton.
+/// 3. Bei Unklarheit einmal nachfragen, danach nur noch auf einen Tap warten
 ///    (die Buttons sind ja die ganze Zeit schon sichtbar) -- nie ein
 ///    kompletter Hänger.
-/// 3. Sobald ein Ergebnis feststeht (Sprache ODER Tap), bricht eine noch
-///    laufende Ansage sofort ab.
-/// 4. Lernschleife: Frage vorlesen -> automatische Aufnahme (Stille-Erkennung)
-///    -> Transkription+Bewertung -> Ton (richtig/falsch; "teilweise" bekommt
-///    bewusst KEINEN Ton, sondern 1 Extra-Sekunde Stille) -> 2,5s Pause -> weiter
+/// 4. Lernschleife: Frage vorlesen -> Signalton -> automatische Aufnahme
+///    (Stille-Erkennung) -> Transkription+Bewertung -> Ton (richtig/falsch;
+///    "teilweise" bekommt bewusst KEINEN Ton, sondern 1 Extra-Sekunde
+///    Stille) -> 2,5s Pause -> weiter
 /// 5. Nach Durchlauf: TTS nennt die Statistik UND sie wird gleichzeitig sichtbar
 ///    angezeigt (ohne Buttons – Weiterlernen bleibt hier bewusst rein
 ///    sprachgesteuert), dann fragt die App per Ja/Nein, ob man weiterlernen
@@ -71,7 +75,7 @@ struct HandsFreeStudyView: View {
     // Sprachversuchen wie vorher. Ein Tap während gerade zugehört wird,
     // beendet die Aufnahme sofort (siehe `chooseViaButton`); ob am Ende
     // wirklich der getippte oder ein per Sprache erkannter Unterordner
-    // gewinnt, entscheidet `listenWhileSpeakingAndArbitrate` (Sprache hat
+    // gewinnt, entscheidet `announceSubfoldersAndListen` (Sprache hat
     // Vorrang, Button zählt nur als Fallback ohne verwertbaren Sprach-Treffer).
     @State private var visibleSubfolderOptions: [Subfolder] = []
     @State private var pendingButtonChoice: Subfolder?
@@ -238,7 +242,7 @@ struct HandsFreeStudyView: View {
     /// Macht ZWEI Dinge, je nachdem in welcher Phase wir gerade sind:
     /// 1. Merkt sich die Wahl als Fallback UND beendet eine noch laufende
     ///    Aufnahme sofort (statt bis zum natürlichen Stille-Timeout zu
-    ///    warten) -- greift während `listenWhileSpeakingAndArbitrate`.
+    ///    warten) -- greift während `announceSubfoldersAndListen`.
     /// 2. Löst direkt eine wartende Continuation auf, falls gerade NUR noch
     ///    auf einen Tap gewartet wird (kein aktives Zuhören mehr) -- greift
     ///    im letzten Schritt von `selectSubfolderViaVoice`, nach zwei
@@ -246,6 +250,7 @@ struct HandsFreeStudyView: View {
     private func chooseViaButton(_ subfolder: Subfolder) {
         pendingButtonChoice = subfolder
         recorder.requestManualStop()
+        speech.stop() // falls noch mitten in der Ansage getippt wird
         subfolderPickerContinuation?.resume(returning: subfolder)
         subfolderPickerContinuation = nil
     }
@@ -278,10 +283,6 @@ struct HandsFreeStudyView: View {
                 summary = "Du hast das Deck vollständig gelernt. Willst du einen anderen Unterordner lernen?"
             }
 
-            // NICHT mehr blockierend vorgelesen -- Barge-in (Simons Vorgabe:
-            // "schon tausend Mal gehört, will vorzeitig antworten"): das
-            // Mikrofon hört schon während dieser (teils langen) Ansage mit,
-            // siehe `askContinueViaVoice`.
             chosen = await decideNextSubfolder(announcing: summary)
             if Task.isCancelled { return }
             guard chosen != nil else {
@@ -337,10 +338,8 @@ struct HandsFreeStudyView: View {
     /// Zählt (in der Reihenfolge TTS beschreibt) alle Unterordner auf UND
     /// macht sie GLEICHZEITIG als Buttons sichtbar/antippbar (Simons
     /// ausdrückliche Vorgabe) -- nicht mehr nur als Popup-Fallback nach zwei
-    /// erfolglosen Sprachversuchen. `greeting` wird der Aufzählung voran-
-    /// gestellt, als EINE zusammenhängende, unterbrechbare Ansage (Barge-in,
-    /// siehe `listenWhileSpeakingAndArbitrate`) statt einer separaten,
-    /// blockierenden Vor-Ansage.
+    /// erfolglosen Sprachversuchen. `greeting` wird der Aufzählung
+    /// vorangestellt, als EINE zusammenhängende Ansage.
     private func selectSubfolderViaVoice(greeting: String) async -> Subfolder? {
         visibleSubfolderOptions = subfolders
         defer { visibleSubfolderOptions = [] }
@@ -350,12 +349,12 @@ struct HandsFreeStudyView: View {
             .joined(separator: ". ")
         let announcement = greeting.isEmpty ? listText : "\(greeting) \(listText)"
 
-        if let subfolder = await listenWhileSpeakingAndArbitrate(announcement) {
+        if let subfolder = await announceSubfoldersAndListen(announcement) {
             return subfolder
         }
         if Task.isCancelled { return nil }
 
-        if let subfolder = await listenWhileSpeakingAndArbitrate(
+        if let subfolder = await announceSubfoldersAndListen(
             "Das habe ich nicht verstanden. Sag die Nummer oder den Namen noch einmal, oder tippe direkt auf einen Unterordner."
         ) {
             return subfolder
@@ -368,37 +367,26 @@ struct HandsFreeStudyView: View {
         return await waitForButtonTapOnly()
     }
 
-    /// Startet eine Ansage (TTS) UND das Zuhören GLEICHZEITIG (Barge-in: das
-    /// Ende der Ansage muss nicht abgewartet werden, siehe
-    /// `AudioSessionCoordinator`). Ein Tap auf einen der sichtbaren
-    /// Unterordner-Buttons während der Aufnahme beendet sie sofort (statt
-    /// bis zum natürlichen Stille-Timeout zu warten, siehe `chooseViaButton`).
-    /// Sobald ein Ergebnis feststeht, wird eine noch laufende Ansage sofort
-    /// abgebrochen. Ein per Sprache erkannter Treffer hat IMMER Vorrang vor
-    /// einem gleichzeitigen Button-Tap (Simons ausdrückliche Vorgabe); nur
-    /// wenn die Spracherkennung nichts Verwertbares liefert, zählt der
-    /// zwischenzeitlich getippte Button.
-    ///
-    /// Technischer Hinweis: "sofort" heißt hier "sobald die Aufnahme endet"
-    /// (Stille erkannt ODER Button-Tap), nicht "mitten im Wort" -- Whisper
-    /// transkribiert hier den fertigen Aufnahme-Clip, keine Live-Erkennung
-    /// während des Sprechens.
-    private func listenWhileSpeakingAndArbitrate(_ announcement: String) async -> Subfolder? {
+    /// Ansage läuft KOMPLETT durch (die Unterordner-Buttons bleiben dabei
+    /// die ganze Zeit sichtbar/antippbar, ein Tap geht immer sofort), DANN
+    /// ein kurzer Signalton, DANN erst startet das Zuhören -- bewusst kein
+    /// gleichzeitiges Aufnehmen+Ansagen mehr (Simons Entscheidung, siehe
+    /// Datei-Kopf-Kommentar: ohne echte Echo-Unterdrückung ließ sich die
+    /// eigene Stimme der App nicht zuverlässig von Umgebungslärm
+    /// unterscheiden). Ein per Sprache erkannter Treffer hat Vorrang vor
+    /// einem während des Zuhörens getippten Button; nur wenn die
+    /// Spracherkennung nichts Verwertbares liefert, zählt der Button.
+    private func announceSubfoldersAndListen(_ announcement: String) async -> Subfolder? {
         pendingButtonChoice = nil
-        speech.speak(announcement) // nicht-blockierend -- Mikrofon hört sofort mit, auch während die Ansage noch läuft
+        await speech.speakAndWait(announcement)
+        if Task.isCancelled { return nil }
+        await soundPlayer.play(.ready)
+        if Task.isCancelled { return nil }
 
         statusText = "Höre zu…"
         isListening = true
-        // onSpeechDetected: bricht die Ansage bereits im Moment des ERSTEN
-        // erkannten Wortes ab, nicht erst wenn die ganze Aufnahme fertig ist
-        // -- sonst würde eine lange Ansage über die komplette gesprochene
-        // Antwort hinweg weiterlaufen, statt sofort zu verstummen.
-        let recording = await recorder.recordUntilSilence(silenceTimeout: 3.0, onSpeechDetected: { speech.stop() }, isPlaybackActive: { speech.isSpeaking })
+        let recording = await recorder.recordUntilSilence(silenceTimeout: 3.0)
         isListening = false
-        // Absicherung für den Fall, dass NICHT gesprochen, sondern nur ein
-        // Button getippt wurde (dort feuert onSpeechDetected nie) -- eine noch
-        // laufende Ansage muss auch dann sofort verstummen.
-        speech.stop()
 
         if Task.isCancelled { return nil }
 
@@ -431,28 +419,26 @@ struct HandsFreeStudyView: View {
         }
     }
 
-    /// `announcement` (Rundenzusammenfassung + "Willst du weiterlernen?",
-    /// teils ein langer Satz) wird NICHT blockierend vorgelesen -- Barge-in
-    /// (Simons Vorgabe: "schon tausend Mal gehört, will vorzeitig
-    /// antworten"): das Mikrofon hört schon während der Ansage mit, siehe
-    /// `listenWhileSpeakingYesNo`.
+    /// `announcement` (Rundenzusammenfassung + "Willst du weiterlernen?")
+    /// läuft komplett durch, dann Signalton, dann erst Zuhören -- siehe
+    /// `announceSubfoldersAndListen`-Kommentar für die Begründung.
     private func askContinueViaVoice(afterAnnouncing announcement: String) async -> Bool {
-        if let answer = await listenWhileSpeakingYesNo(announcement) { return answer }
+        if let answer = await announceAndListenYesNo(announcement) { return answer }
         if Task.isCancelled { return false }
-        if let answer = await listenWhileSpeakingYesNo("Das habe ich nicht verstanden. Sag bitte ja oder nein.") { return answer }
+        if let answer = await announceAndListenYesNo("Das habe ich nicht verstanden. Sag bitte ja oder nein.") { return answer }
         return await presentVisualYesNoPicker()
     }
 
-    private func listenWhileSpeakingYesNo(_ announcement: String) async -> Bool? {
-        speech.speak(announcement) // nicht-blockierend -- Mikrofon hört sofort mit
+    private func announceAndListenYesNo(_ announcement: String) async -> Bool? {
+        await speech.speakAndWait(announcement)
+        if Task.isCancelled { return nil }
+        await soundPlayer.play(.ready)
+        if Task.isCancelled { return nil }
 
         statusText = "Höre zu… (ja/nein)"
         isListening = true
-        // onSpeechDetected: Ansage bricht sofort ab, sobald "ja"/"nein"
-        // losgeht -- nicht erst wenn die ganze Antwort fertig ist.
-        let url = await recorder.recordUntilSilence(silenceTimeout: 2.5, onSpeechDetected: { speech.stop() }, isPlaybackActive: { speech.isSpeaking })
+        let url = await recorder.recordUntilSilence(silenceTimeout: 2.5)
         isListening = false
-        speech.stop() // Absicherung, falls gar nicht gesprochen wurde
 
         if Task.isCancelled { return nil }
         guard let url else { return nil }
@@ -490,22 +476,16 @@ struct HandsFreeStudyView: View {
             lastVerdict = nil
             lastAnswer = nil
 
-            // Barge-in (Simons ausdrückliche Vorgabe: "Frage schon tausend Mal
-            // gehört, will vorzeitig antworten"): das Mikrofon hört schon
-            // WÄHREND die Frage noch vorgelesen wird mit, statt erst danach +
-            // fester Pause. onSpeechDetected bricht die Ansage bereits im
-            // Moment des ERSTEN erkannten Wortes ab -- nicht erst, wenn die
-            // ganze Antwort fertig aufgenommen ist (sonst würde die Frage
-            // über die komplette Antwort hinweg weiterlaufen).
-            statusText = "Frage wird vorgelesen – du kannst direkt antworten…"
-            speech.speak(FlashcardMarkdown.plainText(from: card.question))
+            statusText = "Frage wird vorgelesen…"
+            await speech.speakAndWait(FlashcardMarkdown.plainText(from: card.question))
+            if Task.isCancelled { break }
+            await soundPlayer.play(.ready)
+            if Task.isCancelled { break }
 
+            statusText = "Höre zu… (oder \"Lösung abgeben\" tippen)"
             isListening = true
-            let url = await recorder.recordUntilSilence(onSpeechDetected: { speech.stop() }, isPlaybackActive: { speech.isSpeaking })
+            let url = await recorder.recordUntilSilence()
             isListening = false
-            // Absicherung, falls "Lösung abgeben" getippt wurde, ohne dass
-            // vorher Sprache erkannt wurde (dort feuert onSpeechDetected nie).
-            speech.stop()
 
             guard let url else {
                 if recorder.permissionDenied { break }

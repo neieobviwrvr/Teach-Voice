@@ -14,9 +14,8 @@ final class AudioRecorder: NSObject, ObservableObject {
     /// Lärmpegel) – z.B. per "Lösung abgeben"-Button gesetzt.
     private var manualStopRequested = false
     /// Ergebnis der LETZTEN `recordUntilSilence`-Aufnahme: wurde überhaupt
-    /// einmal ein Pegel über der Stille-Schwelle gemessen? Erlaubt Aufrufern
-    /// (siehe `HandsFreeStudyView.listenWhileSpeakingAndArbitrate`), eine
-    /// teure Transkription zu überspringen, wenn der User erkennbar gar
+    /// einmal ein Pegel über der Stille-Schwelle gemessen? Erlaubt Aufrufern,
+    /// eine teure Transkription zu überspringen, wenn der User erkennbar gar
     /// nichts gesagt hat (z.B. weil er nur einen Button getippt hat) --
     /// spart in genau diesem Fall die Whisper-Latenz.
     private(set) var lastRecordingDetectedSpeech = false
@@ -39,10 +38,8 @@ final class AudioRecorder: NSObject, ObservableObject {
             return false
         }
 
-        // Einheitlich über AudioSessionCoordinator statt einer eigenen,
-        // abweichenden Kategorie/Modus -- sonst würde eine gleichzeitig
-        // laufende TTS-Ansage (Barge-in, siehe HandsFreeStudyView) durch das
-        // Umschalten hier unterbrochen bzw. falsch geroutet.
+        // Einheitlich über AudioSessionCoordinator statt einer eigenen
+        // Kategorie/Modus.
         AudioSessionCoordinator.activate()
 
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("answer-\(UUID().uuidString).wav")
@@ -73,15 +70,6 @@ final class AudioRecorder: NSObject, ObservableObject {
     }
 
     /// Stoppt die Aufnahme und liefert die Datei-URL für die Transkription.
-    ///
-    /// Deaktiviert die AVAudioSession bewusst NICHT mehr hier (anders als
-    /// früher) -- seit Barge-in (gleichzeitiges TTS+STT, siehe
-    /// AudioSessionCoordinator) könnte eine parallel noch laufende Ansage
-    /// genau dadurch abgewürgt werden, und häufiges Aktivieren/Deaktivieren
-    /// zwischen einzelnen Aufnahmen kann hörbare Klicks verursachen. Die
-    /// Session wird stattdessen erst beim echten Verlassen einer Lern-/
-    /// Hands-free-Sitzung freigegeben (`AudioSessionCoordinator.deactivate()`
-    /// in den jeweiligen `stopEverything()`).
     func stopRecording() -> URL? {
         recorder?.stop()
         isRecording = false
@@ -107,40 +95,21 @@ final class AudioRecorder: NSObject, ObservableObject {
     /// `silenceTimeout` (z.B. 3s) genau die Leute abschneiden, die sich vor
     /// der Antwort noch kurz sammeln. `maxDuration` bleibt als Sicherheitsnetz
     /// für den Fall, dass gar nie gesprochen wird.
-    /// `onSpeechDetected` feuert GENAU EINMAL, im Moment des allerersten
-    /// Pegels über der Stille-Schwelle -- also sobald der User erkennbar zu
-    /// sprechen beginnt, nicht erst wenn die ganze Aufnahme fertig ist.
-    /// Gedacht für Barge-in (siehe `HandsFreeStudyView`): ohne dieses Signal
-    /// würde eine parallel noch laufende TTS-Ansage erst nach dem KOMPLETTEN
-    /// Aufnahmevorgang gestoppt (also unter Umständen über die ganze
-    /// gesprochene Antwort hinweg weiterlaufen), statt sofort zu verstummen,
-    /// wenn der User anfängt zu reden.
     ///
-    /// `isPlaybackActive` (optional, für Barge-in): meldet, ob GERADE eine
-    /// TTS-Ansage läuft. Ohne echte Echo-Unterdrückung (siehe
-    /// `AudioSessionCoordinator` -- bewusst deaktiviert, sonst brach die
-    /// Stille-Erkennung komplett) hört das Mikrofon die eigene Ansage
-    /// zwangsläufig mit. Deshalb: solange `isPlaybackActive` true meldet,
-    /// darf die kalibrierte Schwelle deutlich höher liegen als sonst
-    /// (`maxSilenceThresholdDBWhilePlaying` statt `maxSilenceThresholdDB`) --
-    /// filtert die normale Lautstärke der eigenen Ansage heraus, während ein
-    /// User, der WIRKLICH dazwischenredet (spürbar lauter als die Ansage
-    /// selbst), trotzdem erkannt wird -- echte Unterbrechung bleibt also
-    /// möglich, nur eben nicht bei jedem kleinsten Mitschnitt der eigenen
-    /// Stimme. Endet die Ansage von selbst (ohne dass unterbrochen wurde),
-    /// wird automatisch NEU kalibriert -- sonst wäre die (an die Ansagen-
-    /// Lautstärke angepasste, oft recht hohe) Schwelle für die tatsächliche,
-    /// leisere Antwort in der jetzt wieder ruhigeren Umgebung zu hoch.
+    /// Bewusst wieder die EINFACHE Version, ohne Sonderfälle für gleichzeitig
+    /// laufendes TTS: Simons Entscheidung, echtes Sprach-Barge-in (Aufnahme
+    /// UND Ansage gleichzeitig) wieder aufzugeben -- ohne Echo-Unterdrückung
+    /// ließ sich die eigene Stimme der App nicht zuverlässig von Umgebungs-
+    /// lärm (z.B. vorbeifahrende Autos) unterscheiden. Aufrufer starten die
+    /// Aufnahme jetzt erst, NACHDEM die Ansage komplett durchgelaufen ist
+    /// (siehe HandsFreeStudyView).
     func recordUntilSilence(
         calibrationDuration: TimeInterval = 1.0,
         silenceMargin: Float = 12.0,
         minSilenceThresholdDB: Float = -50.0,
         maxSilenceThresholdDB: Float = -20.0,
-        maxSilenceThresholdDBWhilePlaying: Float = 0.0,
         silenceTimeout: TimeInterval = 3.0,
-        maxDuration: TimeInterval = 45.0,
-        onSpeechDetected: (() -> Void)? = nil,
-        isPlaybackActive: (() -> Bool)? = nil
+        maxDuration: TimeInterval = 45.0
     ) async -> URL? {
         manualStopRequested = false
         lastRecordingDetectedSpeech = false
@@ -149,10 +118,8 @@ final class AudioRecorder: NSObject, ObservableObject {
         let pollInterval: TimeInterval = 0.2
         var silenceElapsed: TimeInterval = 0
         var totalElapsed: TimeInterval = 0
-        var calibrationStartElapsed: TimeInterval = 0
         var ambientSamples: [Float] = []
         var silenceThresholdDB: Float?
-        var wasPlaybackActiveLastPoll = isPlaybackActive?() ?? false
         // Wird erst true, sobald der Pegel einmal über der Stille-Schwelle
         // lag – erst dann darf `silenceElapsed` überhaupt zum Timeout führen.
         var hasDetectedSpeech = false
@@ -176,21 +143,11 @@ final class AudioRecorder: NSObject, ObservableObject {
             recorder.updateMeters()
             let level = recorder.averagePower(forChannel: 0)
             totalElapsed += pollInterval
-            let playbackActiveNow = isPlaybackActive?() ?? false
 
-            // Ansage ist GERADE (ohne Unterbrechung durch den User) zu Ende
-            // gegangen -- neu kalibrieren, siehe Doku oben.
-            if wasPlaybackActiveLastPoll && !playbackActiveNow && !hasDetectedSpeech {
-                silenceThresholdDB = nil
-                ambientSamples = []
-                calibrationStartElapsed = totalElapsed
-            }
-            wasPlaybackActiveLastPoll = playbackActiveNow
-
-            if totalElapsed - calibrationStartElapsed <= calibrationDuration {
+            if totalElapsed <= calibrationDuration {
                 // Kalibrierungsfenster: noch keine Stille-Erkennung, nur die
-                // Umgebungslautstärke (bzw. bei laufender Ansage: deren
-                // eigene Lautstärke) sammeln.
+                // Umgebungslautstärke sammeln (Annahme: die ersten ~1s sind
+                // noch kein Sprechbeginn, sondern Raumgeräusch).
                 ambientSamples.append(level)
                 continue
             }
@@ -199,18 +156,13 @@ final class AudioRecorder: NSObject, ObservableObject {
                 let ambientFloor = ambientSamples.isEmpty
                     ? minSilenceThresholdDB
                     : ambientSamples.reduce(0, +) / Float(ambientSamples.count)
-                let ceiling = playbackActiveNow ? maxSilenceThresholdDBWhilePlaying : maxSilenceThresholdDB
-                silenceThresholdDB = min(ceiling, max(minSilenceThresholdDB, ambientFloor + silenceMargin))
+                silenceThresholdDB = min(maxSilenceThresholdDB, max(minSilenceThresholdDB, ambientFloor + silenceMargin))
             }
 
             guard let threshold = silenceThresholdDB else { continue }
 
             if level >= threshold {
-                // User spricht gerade (oder beginnt jetzt zu sprechen) --
-                // bzw. bei laufender Ansage: redet spürbar lauter dazwischen.
-                if !hasDetectedSpeech {
-                    onSpeechDetected?()
-                }
+                // User spricht gerade (oder beginnt jetzt zu sprechen).
                 hasDetectedSpeech = true
                 lastRecordingDetectedSpeech = true
                 silenceElapsed = 0

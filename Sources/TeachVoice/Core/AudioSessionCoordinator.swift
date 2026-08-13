@@ -40,11 +40,20 @@ import AVFoundation
 /// eindeutig überschritt -- die App erkannte dann nie "User spricht" und
 /// hörte bis zum 45s-Sicherheitsnetz einfach durch. `.measurement` liefert
 /// dagegen die rohen, unverfälschten dB-Werte, auf die der ganze Kalibrierungs-
-/// /Schwellwert-Algorithmus ausgelegt ist. Der Preis: keine Echo-Unterdrückung
-/// mehr -- läuft die TTS-Ansage noch, während bereits aufgenommen wird, hört
-/// das Mikrofon sie roh mit (kein Cancelling). Bewusster Kompromiss:
-/// verlässliche Stille-Erkennung wiegt schwerer als perfekt echofreies
-/// Barge-in, das sich hier ohne echtes Gerät ohnehin nicht fein justieren ließ.
+/// /Schwellwert-Algorithmus ausgelegt ist.
+///
+/// SPRACH-BARGE-IN (Aufnahme+Ansage gleichzeitig) INZWISCHEN GANZ AUFGEGEBEN,
+/// nicht nur der `.voiceChat`-Modus: ohne Echo-Unterdrückung hörte das
+/// Mikrofon jedes Wort der eigenen Ansage zwangsläufig mit -- selbst nach
+/// einem Fix (Kalibrierungsschwelle passte sich an die Ansagen-Lautstärke an)
+/// blieb das Problem, dass sich echter Umgebungslärm (z.B. vorbeifahrende
+/// Autos) genauso wenig zuverlässig von einer echten Stimme unterscheiden
+/// ließ wie zuvor die eigene Stimme der App. Simons Entscheidung: Ansage läuft
+/// jetzt IMMER komplett durch, danach ein Signalton (`SoundEffectPlayer`),
+/// erst DANACH beginnt die Aufnahme -- siehe `HandsFreeStudyView`. `.playAndRecord`
+/// bleibt trotzdem als Kategorie bestehen (kein Zurückwechseln zu `.playback`
+/// zwischen Ansage und Aufnahme nötig, vermeidet die oben beschriebenen
+/// Umschalt-Klicks), auch wenn die gleichzeitige Nutzung nicht mehr gebraucht wird.
 enum AudioSessionCoordinator {
     static func activate() {
         let session = AVAudioSession.sharedInstance()
