@@ -111,6 +111,34 @@ final class AuthManager: ObservableObject {
         session = nil
     }
 
+    /// Löscht den eingeloggten Account server-seitig UNWIDERRUFLICH, inklusive
+    /// aller Ordner/Unterordner/Karteikarten (via `ON DELETE CASCADE`, siehe
+    /// `supabase/migrations/0001_init.sql`) -- über die Edge Function
+    /// `delete-account`, da das Löschen eines Auth-Users den `service_role`-
+    /// Key braucht, den der Client nie besitzt (wie bei allen anderen
+    /// Edge Functions in diesem Projekt). Beendet bei Erfolg lokal die
+    /// Sitzung wie `signOut()`, da Account+Session serverseitig nicht mehr
+    /// existieren.
+    func deleteAccount() async throws {
+        guard let token = await validAccessToken() else {
+            throw APIError.notAuthenticated
+        }
+
+        var request = URLRequest(url: SupabaseConfig.url.appendingPathComponent("functions/v1/delete-account"))
+        request.httpMethod = "POST"
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
+        guard (200...299).contains(http.statusCode) else {
+            let message = (try? decoder.decode(APIErrorBody.self, from: data))?.readableMessage ?? "Unbekannter Fehler"
+            throw APIError.server(status: http.statusCode, message: message)
+        }
+
+        signOut()
+    }
+
     /// Liefert einen gültigen Access-Token, refresht bei Bedarf.
     func validAccessToken() async -> String? {
         guard let session else { return nil }

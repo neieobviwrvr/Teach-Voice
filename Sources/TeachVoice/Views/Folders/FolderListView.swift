@@ -131,6 +131,14 @@ struct FolderListView: View {
             .onChange(of: library.folders) { _, newFolders in
                 syncSelectedFolder(with: newFolders)
             }
+            // Simon: wechselt man im Oberordner-Dropdown den Ordner, sollen
+            // die Unterordner-Pillen des VORHERIGEN Ordners nicht einfach
+            // stehen bleiben (die wären dann falsch) -- Mindmap klappt bei
+            // jedem Wechsel automatisch wieder ein, bis erneut auf "Lernen"
+            // getippt wird.
+            .onChange(of: selectedFolder) { _, _ in
+                showFolderMindMap = false
+            }
             .task(id: selectedFolder?.id) {
                 if let selectedFolder {
                     await library.loadSubfolders(for: selectedFolder)
@@ -409,17 +417,19 @@ struct FolderListView: View {
 
     // MARK: - Hands-free (kompakt, siehe Simons Vorgabe: verkleinert)
 
+    /// Simon: "entferne auf dem Homescreen die beiden Buttons 'Voice only'
+    /// und 'Eigenbewertung'" -- "Voice only" bleibt als FUNKTION weiterhin
+    /// erreichbar (über den Mindmap-Pillen-Tap, der denselben
+    /// Strictness-Picker + `voiceOnlySubfolders`-Navigationsmechanismus
+    /// nutzt, siehe `subfolderMindMapNode`), nur der eigene Homescreen-Button
+    /// dafür fällt weg. "Eigenbewertung" hat dadurch aktuell KEINEN
+    /// Einstiegspunkt mehr in der UI -- die zugehörige Logik
+    /// (`startEigenbewertungFlow`, `HandsFreeSelfAssessmentStudyView` etc.)
+    /// bleibt bewusst unangetastet im Code liegen statt gelöscht zu werden,
+    /// falls sie später wieder verdrahtet werden soll.
     @ViewBuilder
     private var handsFreeSection: some View {
         Section {
-            HStack(spacing: 8) {
-                compactHandsFreeButton(title: "Voice only", systemImage: "waveform") {
-                    await startVoiceOnlyFlow()
-                }
-                compactHandsFreeButton(title: "Eigenbewertung", systemImage: "hand.tap") {
-                    await startEigenbewertungFlow()
-                }
-            }
             Button {
                 showFolderManagement = true
             } label: {
@@ -430,7 +440,7 @@ struct FolderListView: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
         } footer: {
-            Text("\"Voice only\": komplett per Sprache, die App fragt dich selbst welchen Unterordner du lernen willst, GPT bewertet allein. \"Eigenbewertung\": Unterordner per Pop-up wählen, nach jeder Frage entscheidest du selbst per Button. \"Ordner verwalten\": weitere Ordner anlegen, umbenennen oder löschen.")
+            Text("\"Ordner verwalten\": weitere Ordner anlegen, umbenennen oder löschen.")
         }
     }
 
