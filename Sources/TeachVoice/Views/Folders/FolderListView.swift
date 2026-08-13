@@ -20,6 +20,12 @@ struct FolderListView: View {
     @State private var showMicPermissionNotice = false
     @State private var isLoadingHandsFree = false
     @State private var showProfile = false
+    // Neuer zentraler "Lernen"-Button (Simons Vorgabe): Ordner "fallen" per
+    // Animation mindmap-artig heraus, statt direkt als Liste sichtbar zu
+    // sein. Alle bisherigen Funktionen/Buttons bleiben erhalten, nur visuell
+    // verkleinert bzw. nach unten verschoben (siehe `heroSection`,
+    // `handsFreeSection`, `folderRows` weiter unten in `mainList`).
+    @State private var showFolderMindMap = false
 
     // "Hands-free (Voice only)": Unterordner-Auswahl passiert per Sprachmenü
     // INNERHALB der View – hier wird nur die Unterordner-Liste vorgeladen und
@@ -93,6 +99,8 @@ struct FolderListView: View {
     @ViewBuilder
     private var mainList: some View {
         List {
+            heroSection
+
             if mode == .guest {
                 Section {
                     Label("Gastmodus – Karten sind nur auf diesem Gerät gespeichert.", systemImage: "iphone")
@@ -102,18 +110,102 @@ struct FolderListView: View {
             }
 
             handsFreeSection
-            folderRows
+
+            Section("Alle Ordner") {
+                folderRows
+            }
         }
     }
+
+    // MARK: - Hero: zentraler "Lernen"-Button mit Mindmap-Reveal
+
+    /// Nimmt bewusst viel vertikalen Platz ein (füllt den sichtbaren Bereich
+    /// beim Öffnen der App), damit Hands-free-Buttons und Ordnerliste
+    /// darunter erst durch Scrollen sichtbar werden -- Simons ausdrückliche
+    /// Vorgabe. `.listRowInsets`/`.listRowBackground(.clear)` entfernen die
+    /// normale List-Zeilen-Optik, damit das freie Positionieren der
+    /// Mindmap-Knoten nicht mit dem Standard-List-Layout kollidiert.
+    @ViewBuilder
+    private var heroSection: some View {
+        Section {
+            ZStack {
+                ForEach(Array(library.folders.enumerated()), id: \.element.id) { index, folder in
+                    folderMindMapNode(folder, index: index, total: library.folders.count)
+                }
+                learnButton
+            }
+            .frame(maxWidth: .infinity)
+            .frame(height: 340)
+            .listRowInsets(EdgeInsets())
+            .listRowBackground(Color.clear)
+            .listRowSeparator(.hidden)
+        }
+    }
+
+    private var learnButton: some View {
+        Button {
+            withAnimation(.spring(response: 0.45, dampingFraction: 0.72)) {
+                showFolderMindMap.toggle()
+            }
+        } label: {
+            Text("Lernen")
+                .font(.title3.bold())
+                .foregroundStyle(.white)
+                .frame(width: 130, height: 130)
+                .background(Circle().fill(Color.accentColor))
+                .shadow(radius: showFolderMindMap ? 12 : 4)
+        }
+        .buttonStyle(.plain)
+        .disabled(library.folders.isEmpty)
+        .opacity(library.folders.isEmpty ? 0.5 : 1)
+    }
+
+    /// Ein einzelner Ordner-Knoten, der beim Antippen von "Lernen"
+    /// mindmap-artig aus der Button-Mitte herausfährt. Verteilung: ein
+    /// Bogen von 180° (links) über oben bis 0° (rechts) -- bei nur einem
+    /// Ordner (aktuell der Regelfall, siehe `maxFoldersPerUser`) landet der
+    /// Knoten mittig oberhalb des Buttons; bei mehreren Ordnern fächern sie
+    /// sich darüber auf. Radius/Höhe wurden hier ohne echtes Gerät gewählt
+    /// (kein lokaler Simulator verfügbar) -- ggf. nach dem ersten Test noch
+    /// nachjustieren.
+    private func folderMindMapNode(_ folder: Folder, index: Int, total: Int) -> some View {
+        let angleDegrees: Double = total <= 1 ? 0 : -90 + (180.0 / Double(total - 1)) * Double(index)
+        let angleRadians = angleDegrees * .pi / 180
+        let radius: CGFloat = 120
+        let dx = showFolderMindMap ? radius * sin(angleRadians) : 0
+        let dy = showFolderMindMap ? -radius * cos(angleRadians) : 0
+
+        return NavigationLink(value: folder) {
+            Text(folder.name)
+                .font(.footnote.bold())
+                .lineLimit(1)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(Capsule().fill(.thickMaterial))
+                .overlay(Capsule().stroke(Color.accentColor.opacity(0.4), lineWidth: 1))
+        }
+        .buttonStyle(.plain)
+        .offset(x: dx, y: dy)
+        .scaleEffect(showFolderMindMap ? 1 : 0.01)
+        .opacity(showFolderMindMap ? 1 : 0)
+        .animation(
+            .spring(response: 0.45, dampingFraction: 0.68).delay(Double(index) * 0.06),
+            value: showFolderMindMap
+        )
+    }
+
+    // MARK: - Hands-free (kompakt, siehe Simons Vorgabe: verkleinert)
 
     @ViewBuilder
     private var handsFreeSection: some View {
         Section {
-            handsFreeButton(title: "Hands-free (Voice only)", systemImage: "waveform") {
-                await startVoiceOnlyFlow()
-            }
-            handsFreeButton(title: "Hands-free lernen (Eigenbewertung)", systemImage: "hand.tap") {
-                await startEigenbewertungFlow()
+            HStack(spacing: 8) {
+                compactHandsFreeButton(title: "Voice only", systemImage: "waveform") {
+                    await startVoiceOnlyFlow()
+                }
+                compactHandsFreeButton(title: "Eigenbewertung", systemImage: "hand.tap") {
+                    await startEigenbewertungFlow()
+                }
             }
         } footer: {
             Text("\"Voice only\": komplett per Sprache, die App fragt dich selbst welchen Unterordner du lernen willst, GPT bewertet allein. \"Eigenbewertung\": Unterordner per Pop-up wählen, nach jeder Frage entscheidest du selbst per Button.")
@@ -121,21 +213,26 @@ struct FolderListView: View {
     }
 
     /// Einheitlicher Ladezustand mit echtem Spinner statt reinem Text-Swap
-    /// ("Lädt…") – konsistent mit dem Rest der App (PDFImportView, StudyView),
-    /// die für laufende Vorgänge durchgängig einen `ProgressView` zeigen.
-    private func handsFreeButton(title: String, systemImage: String, action: @escaping () async -> Void) -> some View {
+    /// ("Lädt…") – konsistent mit dem Rest der App (PDFImportView, StudyView).
+    /// Bewusst klein/kompakt (Simons Vorgabe) -- kleine Schrift, wenig
+    /// Padding, nebeneinander statt volle Zeilenbreite wie vorher.
+    private func compactHandsFreeButton(title: String, systemImage: String, action: @escaping () async -> Void) -> some View {
         Button {
             Task { await action() }
         } label: {
-            HStack {
+            VStack(spacing: 2) {
                 if isLoadingHandsFree {
                     ProgressView()
                 } else {
                     Image(systemName: systemImage)
                 }
-                Text(title)
+                Text(title).font(.caption2)
             }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
         }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
         .disabled(isLoadingHandsFree)
     }
 
