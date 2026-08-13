@@ -28,11 +28,16 @@ struct FolderListView: View {
     @State private var showFolderMindMap = false
     // Ersetzt den statischen "Meine Ordner"-Titel: ein Dropdown oben links
     // wählt den "Oberordner" (= `Folder`), dessen UNTERORDNER dann im
-    // "Lernen"-Mindmap herausfahren (Simons Vorgabe). Bei aktuell max. 1
-    // Ordner/User (`maxFoldersPerUser`) zeigt das Dropdown heute meist nur
-    // eine Option, ist aber bewusst allgemein gebaut für den Fall, dass das
-    // Limit später gelockert wird.
+    // "Lernen"-Mindmap herausfahren (Simons Vorgabe). `maxFoldersPerUser`
+    // (aktuell 2, extra zum Testen dieses Dropdowns gelockert) begrenzt die
+    // Auswahl noch, das Dropdown ist aber bewusst allgemein für mehr gebaut.
     @State private var selectedFolder: Folder?
+    // Simon: "füge unter den Buttons für Voice-Only und Eigenbewertung einen
+    // Button an für extra Ordner und die generelle Ordnerverwaltung" -- jetzt
+    // wo `maxFoldersPerUser` auf 2 gelockert ist (s.u.), lohnt sich ein
+    // eigener schneller Einstieg dafür statt nur die "Alle Ordner"-Section
+    // ganz unten in der Liste.
+    @State private var showFolderManagement = false
 
     // "Hands-free (Voice only)": Unterordner-Auswahl passiert per Sprachmenü
     // INNERHALB der View – hier wird nur die Unterordner-Liste vorgeladen und
@@ -107,6 +112,9 @@ struct FolderListView: View {
             .refreshable { await library.loadFolders() }
             .sheet(isPresented: $showProfile) {
                 ProfileView(mode: mode)
+            }
+            .sheet(isPresented: $showFolderManagement) {
+                folderManagementSheet
             }
     }
 
@@ -249,8 +257,55 @@ struct FolderListView: View {
                     await startEigenbewertungFlow()
                 }
             }
+            Button {
+                showFolderManagement = true
+            } label: {
+                Label("Ordner verwalten", systemImage: "folder.badge.gearshape")
+                    .font(.caption)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         } footer: {
-            Text("\"Voice only\": komplett per Sprache, die App fragt dich selbst welchen Unterordner du lernen willst, GPT bewertet allein. \"Eigenbewertung\": Unterordner per Pop-up wählen, nach jeder Frage entscheidest du selbst per Button.")
+            Text("\"Voice only\": komplett per Sprache, die App fragt dich selbst welchen Unterordner du lernen willst, GPT bewertet allein. \"Eigenbewertung\": Unterordner per Pop-up wählen, nach jeder Frage entscheidest du selbst per Button. \"Ordner verwalten\": weitere Ordner anlegen, umbenennen oder löschen.")
+        }
+    }
+
+    /// Eigenes Sheet statt nur die ohnehin vorhandene "Alle Ordner"-Section
+    /// ganz unten zu nutzen -- Simons Vorgabe war ein direkter Button dafür.
+    /// Reicht `folderRows` (samt Swipe-Actions/Kontextmenü) unverändert
+    /// durch; "Ordner hinzufügen" hier löst dieselbe `showAddFolder`-Alert
+    /// wie der Rest der View aus (gleicher, geteilter State).
+    @ViewBuilder
+    private var folderManagementSheet: some View {
+        // Eigener, unabhängiger NavigationStack (Sheet-Präsentation) -- teilt
+        // sich KEINE .navigationDestination-Registrierungen mit dem
+        // Root-Stack in `navigationList`, deshalb hier eine eigene für
+        // `Folder.self` nötig, sonst würde ein Tap auf einen Ordner in
+        // diesem Sheet wirkungslos verpuffen.
+        NavigationStack {
+            List {
+                folderRows
+            }
+            .navigationDestination(for: Folder.self) { folder in
+                SubfolderListView(folder: folder)
+            }
+            .overlay { emptyStateOverlay }
+            .navigationTitle("Ordner verwalten")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("Fertig") { showFolderManagement = false }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showAddFolder = true
+                    } label: {
+                        Label("Ordner hinzufügen", systemImage: "plus")
+                    }
+                    .disabled(isFull)
+                }
+            }
         }
     }
 
@@ -363,8 +418,8 @@ struct FolderListView: View {
     }
 
     /// Wählt automatisch einen Oberordner aus, sobald welche geladen sind
-    /// (aktuell praktisch immer der einzige, siehe `maxFoldersPerUser`), und
-    /// fängt den Fall ab, dass der bisher gewählte Ordner gelöscht wurde.
+    /// (den ersten, falls noch keiner gewählt ist), und fängt den Fall ab,
+    /// dass der bisher gewählte Ordner gelöscht wurde.
     private func syncSelectedFolder(with folders: [Folder]) {
         if selectedFolder == nil || !folders.contains(where: { $0.id == selectedFolder?.id }) {
             selectedFolder = folders.first
@@ -374,9 +429,9 @@ struct FolderListView: View {
     @ViewBuilder
     private var addFolderBottomButton: some View {
         // Ohne die Caption ist für den User nicht erkennbar, WARUM der Button
-        // ausgegraut ist, sobald der 1 Ordner (Hard-Limit) schon existiert –
-        // wird nur bei isFull eingeblendet, um den Normalfall nicht unnötig
-        // vollzutexten.
+        // ausgegraut ist, sobald das Hard-Limit (`maxFoldersPerUser`) schon
+        // erreicht ist – wird nur bei isFull eingeblendet, um den Normalfall
+        // nicht unnötig vollzutexten.
         VStack(spacing: 4) {
             Button {
                 showAddFolder = true
@@ -388,7 +443,7 @@ struct FolderListView: View {
             .disabled(isFull)
 
             if isFull {
-                Text("Maximal 1 Ordner pro Account – lege stattdessen beliebig viele Unterordner darin an.")
+                Text("Maximal \(maxFoldersPerUser) Ordner pro Account – lege stattdessen beliebig viele Unterordner darin an.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)

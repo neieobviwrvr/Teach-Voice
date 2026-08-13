@@ -74,12 +74,15 @@ struct Flashcard: Codable, Identifiable, Hashable {
 
 // Harte Limits für die Startphase (siehe DB-Trigger enforce_folder_limit /
 // enforce_flashcard_limit in supabase/migrations/0003_tighter_limits.sql,
-// 0005_raise_flashcard_limit.sql, 0007_unlimited_subfolders.sql) – bewusst
-// als benannte Konstanten statt verstreuter Zahlen, da Simon das ausdrücklich
-// als vorläufigen Startwert bezeichnet hat, nicht als endgültige Grenze.
+// 0005_raise_flashcard_limit.sql, 0007_unlimited_subfolders.sql,
+// 0011_raise_folder_limit.sql) – bewusst als benannte Konstanten statt
+// verstreuter Zahlen, da Simon das ausdrücklich als vorläufigen Startwert
+// bezeichnet hat, nicht als endgültige Grenze.
 
-/// Maximale Anzahl Ober-Ordner pro Nutzer.
-let maxFoldersPerUser = 1
+/// Maximale Anzahl Ober-Ordner pro Nutzer. War 1, von Simon auf 2 gelockert
+/// zum Testen des Oberordner-Dropdowns (siehe 0011_raise_folder_limit.sql
+/// für die serverseitige Spiegelung dieses Werts).
+let maxFoldersPerUser = 2
 
 /// Unterordner pro Ober-Ordner sind bewusst UNBEGRENZT (Simons Entscheidung,
 /// siehe 0007_unlimited_subfolders.sql) – begrenzend ist stattdessen
