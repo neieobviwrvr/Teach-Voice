@@ -26,6 +26,12 @@ struct FolderListView: View {
     // verkleinert bzw. nach unten verschoben (siehe `heroSection`,
     // `handsFreeSection`, `folderRows` weiter unten in `mainList`).
     @State private var showFolderMindMap = false
+    // Per GeometryReader gemessene Breite der Hero-Section -- Grundlage für
+    // die komplette Mindmap-Geometrie (`mindMapSlots`). Startwert 375 =
+    // schmalstes von iOS 17 unterstütztes iPhone; wird beim ersten Layout
+    // sofort durch den echten Messwert ersetzt (unsichtbar, da die Pillen
+    // bis zum ersten "Lernen"-Tap ohnehin ausgeblendet sind).
+    @State private var heroMeasuredWidth: CGFloat = 375
     // Ersetzt den statischen "Meine Ordner"-Titel: ein Dropdown oben links
     // wählt den "Oberordner" (= `Folder`), dessen UNTERORDNER dann im
     // "Lernen"-Mindmap herausfahren (Simons Vorgabe). `maxFoldersPerUser`
@@ -171,32 +177,48 @@ struct FolderListView: View {
     /// Vorgabe. `.listRowInsets`/`.listRowBackground(.clear)` entfernen die
     /// normale List-Zeilen-Optik.
     ///
-    /// Simon wollte die Radial-Animation (Pillen fahren wie bei einer Mindmap
-    /// rund um den "Lernen"-Button heraus) ausdrücklich behalten, aber
-    /// GARANTIERT weder über den Bildschirmrand hinausragend NOCH hinter dem
-    /// Button verschwindend. `GeometryReader` liefert dafür die ECHTE
-    /// verfügbare Breite/Höhe dieser Section; `safeMaxAngleDegrees` (unten)
-    /// und `subfolderMindMapNode` leiten daraus Winkel-Spannweite und
-    /// Pillen-Größe her (siehe dortige Kommentare für die Begründung) --
-    /// passt sich automatisch an jede Displaygröße/iOS-Version an.
+    /// Simons drei harte Invarianten (nach zwei fehlgeschlagenen
+    /// Radial-Varianten -- erst Pillen über dem Screenrand, dann hinter dem
+    /// Button, dann übereinander): (1) alle Pillen KOMPLETT im Bild,
+    /// (2) keine Pille im/hinter dem "Lernen"-Button, (3) keine Pillen
+    /// übereinander -- auf jeder Displaygröße/iOS-Version. Ein echter Kreis
+    /// um den Button kann das ab 3 Pillen NICHT erfüllen: seitlich neben
+    /// einem 130pt breiten Button ist auf einem 375pt-Screen kein Platz für
+    /// eine lesbare Pille (65pt Button-Radius + Abstand + halbe Pillenbreite
+    /// + Randabstand > halbe Screenbreite) -- das ist Geometrie, kein
+    /// Tuning-Problem. Deshalb fahren die Pillen jetzt als Fächer NACH OBEN
+    /// aus dem Button heraus, in Reihen zu je 1-3 (abhängig von der
+    /// GEMESSENEN Breite), zeilenweise gestapelt; Positionen und Breiten
+    /// kommen aus `mindMapSlots`, wodurch die drei Invarianten per
+    /// KONSTRUKTION erfüllt sind statt pro Winkel erhofft. Die
+    /// Ausfahr-Animation (Spring aus der Button-Mitte, gestaffelt) ist
+    /// dieselbe wie bei der Radial-Variante.
     @ViewBuilder
     private var heroSection: some View {
+        let rowCount = mindMapRowCount(count: mindMapSubfolders.count, containerWidth: heroMeasuredWidth)
+        let slots = mindMapSlots(count: mindMapSubfolders.count, containerWidth: heroMeasuredWidth)
+        let shift = mindMapButtonShift(rowCount: rowCount)
         Section {
             GeometryReader { geo in
-                let maxAngle = safeMaxAngleDegrees(containerWidth: geo.size.width)
                 ZStack {
                     ForEach(Array(mindMapSubfolders.enumerated()), id: \.element.id) { index, subfolder in
-                        subfolderMindMapNode(
-                            subfolder, index: index, total: mindMapSubfolders.count,
-                            containerSize: geo.size, maxAngleDegrees: maxAngle
-                        )
+                        if index < slots.count {
+                            subfolderMindMapNode(subfolder, index: index, slot: slots[index], buttonShift: shift)
+                        }
                     }
                     learnButton
+                        .offset(y: shift)
                 }
                 .frame(width: geo.size.width, height: geo.size.height)
+                .onAppear { heroMeasuredWidth = geo.size.width }
+                .onChange(of: geo.size.width) { _, newWidth in
+                    heroMeasuredWidth = newWidth
+                }
             }
             .frame(maxWidth: .infinity)
-            .frame(height: 340)
+            // Höhe wächst mit der Reihenzahl (viele Unterordner -> mehr
+            // Reihen), bleibt aber nie unter den bisherigen 340pt.
+            .frame(height: mindMapHeroHeight(rowCount: rowCount))
             .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
@@ -221,102 +243,127 @@ struct FolderListView: View {
         .opacity(mindMapSubfolders.isEmpty ? 0.5 : 1)
     }
 
-    /// "Lernen"-Button: 130pt Durchmesser -> 65pt Radius. Als Konstante,
-    /// weil sowohl `safeMaxAngleDegrees` als auch `subfolderMindMapNode` sie
-    /// brauchen und beide von genau diesem Wert ausgehen müssen wie
-    /// `learnButton`s `.frame(width: 130, height: 130)` oben.
-    private let mindMapButtonRadius: CGFloat = 65
-    private let mindMapDesiredRadius: CGFloat = 120
-    private let mindMapPillHalfHeight: CGFloat = 18 // .footnote, 10pt vertikales Padding -> ~36pt hoch
-
-    /// Größter Winkel (von der Senkrechten aus, in Grad), bei dem eine
-    /// "normal breite" Pille (`assumedPillHalfWidth`) beim Wunsch-Radius
-    /// (`mindMapDesiredRadius`) GLEICHZEITIG (a) den "Lernen"-Button nicht
-    /// überlappt und (b) nicht über den Bildschirmrand hinausragt.
-    ///
-    /// Grund für diese Vorab-Berechnung: bei nur 2 Unterordnern (Simons
-    /// Screenshot) landen beide Knoten mit der alten festen ±90°-Spannweite
-    /// GENAU auf Höhe des Buttons -- exakt die Position, an der am wenigsten
-    /// Platz ist (der Button selbst ist dort am "breitesten" im Weg, UND
-    /// horizontal ist der Bildschirm am schnellsten zu Ende). Ein 130pt
-    /// breiter Button plus eine ~150pt breite Pille auf jeder Seite braucht
-    /// schlicht mehr als die ~380-430pt Breite eines Handy-Screens her --
-    /// das ist keine Rechenungenauigkeit, sondern reine Geometrie. Lösung:
-    /// die Knoten NICHT stur auf ±90° verteilen, sondern auf den größten
-    /// Winkel, der nachweislich noch für beide Regeln reicht (rückt bei
-    /// schmalen Screens automatisch enger zusammen Richtung "oberhalb des
-    /// Buttons", wo mehr Platz ist, statt seitlich daneben).
-    ///
-    /// Rechenweg: `A·sinθ + B·cosθ = R·sin(θ+φ)` (Hilfswinkel-Methode) für
-    /// die Button-Bedingung, ein einfacher `arcsin` für die Rand-Bedingung;
-    /// der kleinere der beiden Winkel gewinnt.
-    private func safeMaxAngleDegrees(containerWidth: CGFloat) -> Double {
-        let assumedPillHalfWidth: CGFloat = 50 // ~100pt Pille, reicht für die meisten Unterordner-Namen ohne Schrumpfen
-        let clearanceGap: CGFloat = 12
-        let edgeBuffer: CGFloat = 8
-
-        // (a) Button-Bedingung: assumedPillHalfWidth·sinθ + pillHalfHeight·cosθ <= budget
-        let budget = mindMapDesiredRadius - mindMapButtonRadius - clearanceGap
-        let amplitude = (assumedPillHalfWidth * assumedPillHalfWidth + mindMapPillHalfHeight * mindMapPillHalfHeight).squareRoot()
-        let phi = atan2(Double(mindMapPillHalfHeight), Double(assumedPillHalfWidth))
-        let angleFromButton: Double
-        if amplitude <= 0 || budget >= amplitude {
-            angleFromButton = 90
-        } else if budget <= -amplitude {
-            angleFromButton = 0
-        } else {
-            let theta = asin(Double(budget / amplitude)) - phi
-            angleFromButton = max(0, min(90, theta * 180 / .pi))
-        }
-
-        // (b) Rand-Bedingung: desiredRadius·sinθ + assumedPillHalfWidth + edgeBuffer <= containerWidth/2
-        let edgeSin = (containerWidth / 2 - assumedPillHalfWidth - edgeBuffer) / mindMapDesiredRadius
-        let angleFromEdge: Double = edgeSin >= 1 ? 90 : (edgeSin <= 0 ? 0 : asin(Double(edgeSin)) * 180 / .pi)
-
-        return min(angleFromButton, angleFromEdge)
+    /// Eine berechnete Zielposition + Breiten-Budget für genau eine Pille im
+    /// Mindmap-Fächer. `x`/`y` sind Offsets relativ zur Button-Mitte.
+    private struct MindMapSlot {
+        let x: CGFloat
+        let y: CGFloat
+        let width: CGFloat
     }
 
-    /// Ein einzelner Unterordner-Knoten, der beim Antippen von "Lernen"
-    /// mindmap-artig aus der Button-Mitte herausfährt -- gescoped auf den im
-    /// Oberordner-Dropdown gewählten Ordner (`mindMapSubfolders`). Verteilung
-    /// jetzt über `-maxAngleDegrees...+maxAngleDegrees` (statt fix ±90°, s.
-    /// `safeMaxAngleDegrees`) -- bei nur einem Unterordner landet der Knoten
-    /// weiterhin mittig oberhalb des Buttons.
-    ///
-    /// Radius bleibt fix bei `mindMapDesiredRadius`, da `safeMaxAngleDegrees`
-    /// die Spannweite schon so gewählt hat, dass eine normal breite Pille
-    /// dabei GARANTIERT weder den Button überlappt noch über den Rand
-    /// hinausragt. Als zusätzliches Sicherheitsnetz für UNGEWÖHNLICH lange
-    /// Unterordner-Namen (breiter als die angenommenen ~100pt): die für
-    /// GENAU diesen Winkel tatsächlich noch verfügbare Pillenbreite wird
-    /// separat berechnet und per `.frame(maxWidth:)` erzwungen -- eine
-    /// überlange Pille schrumpft dann per `.minimumScaleFactor` bzw.
-    /// kürzt den Text, statt den Button zu verdecken oder abzuschneiden.
-    private func subfolderMindMapNode(_ subfolder: Subfolder, index: Int, total: Int, containerSize: CGSize, maxAngleDegrees: Double) -> some View {
-        let angleDegrees: Double = total <= 1
-            ? 0
-            : -maxAngleDegrees + (2 * maxAngleDegrees / Double(total - 1)) * Double(index)
-        let angleRadians = angleDegrees * .pi / 180
-        // Explizit auf CGFloat konvertiert (statt roher Double-Werte von
-        // sin/cos), damit die komplette Breiten-/Radius-Rechnung unten
-        // durchgängig in EINEM Zahlentyp bleibt.
-        let sinValue = CGFloat(abs(sin(angleRadians)))
-        let cosValue = CGFloat(abs(cos(angleRadians)))
+    /// Alle Maße der Mindmap-Geometrie an EINEM Ort -- Reihen-Layout,
+    /// Button-Verschiebung und Höhenberechnung müssen von exakt denselben
+    /// Werten ausgehen, sonst driften Rechnung und Darstellung auseinander
+    /// (die Wurzel der letzten drei Positionierungs-Bugs).
+    private enum MindMapGeometry {
+        /// .footnote + 2×10pt vertikales Padding ≈ 36pt Pillenhöhe.
+        static let pillHeight: CGFloat = 36
+        /// Abstand Pille↔Pille, horizontal wie vertikal.
+        static let gap: CGFloat = 10
+        /// Mindestabstand jeder Pille zum linken/rechten Screenrand.
+        static let edgeBuffer: CGFloat = 10
+        /// Button-Mitte -> Mitte der untersten Reihe. 96 - 18 (halbe
+        /// Pillenhöhe) = 78pt Abstand der Pillen-Unterkante zur Button-Mitte
+        /// >= 65 (Button-Radius) + 13 Luft -> Invariante (2) erfüllt.
+        static let firstRowDistance: CGFloat = 96
+        /// Vertikaler Reihenabstand = pillHeight + gap -> Invariante (3)
+        /// zwischen Reihen erfüllt.
+        static let rowPitch: CGFloat = 46
+        /// Unter dieser Breite wird keine weitere Spalte mehr aufgemacht
+        /// (lieber 2 lesbare als 4 unlesbare Pillen pro Reihe).
+        static let minPillWidth: CGFloat = 105
+        static let maxPillWidth: CGFloat = 150
+        /// Button-Radius (65) + Luft nach unten.
+        static let buttonBottomExtent: CGFloat = 80
+        static let topPadding: CGFloat = 8
+    }
 
-        let clearanceGap: CGFloat = 12
-        let edgeBuffer: CGFloat = 8
-        let radius = mindMapDesiredRadius
+    /// Wieviele Pillen nebeneinander in eine Reihe passen -- aus der echten
+    /// gemessenen Breite, gedeckelt auf 3 (auf iPads wären sonst absurd
+    /// viele Spalten möglich). Auf allen von iOS 17 unterstützten iPhones
+    /// (>= 375pt) ergibt das 3.
+    private func mindMapColumns(containerWidth: CGFloat) -> Int {
+        let usable = containerWidth - 2 * MindMapGeometry.edgeBuffer
+        let fitting = Int((usable + MindMapGeometry.gap) / (MindMapGeometry.minPillWidth + MindMapGeometry.gap))
+        return max(1, min(3, fitting))
+    }
 
-        let availableFromButton: CGFloat = sinValue > 0.01
-            ? (radius - mindMapButtonRadius - clearanceGap - mindMapPillHalfHeight * cosValue) / sinValue
-            : .infinity
-        let availableFromEdge = containerSize.width / 2 - radius * sinValue - edgeBuffer
-        let pillWidth = max(60, min(availableFromButton, availableFromEdge, 180))
+    private func mindMapRowCount(count: Int, containerWidth: CGFloat) -> Int {
+        guard count > 0 else { return 0 }
+        let cols = mindMapColumns(containerWidth: containerWidth)
+        return (count + cols - 1) / cols
+    }
 
-        let dx = showFolderMindMap ? radius * sin(angleRadians) : 0
-        let dy = showFolderMindMap ? -radius * cos(angleRadians) : 0
+    /// Berechnet für ALLE Pillen gemeinsam die Zielpositionen: Reihen zu je
+    /// `mindMapColumns` Pillen, von der untersten Reihe (direkt über dem
+    /// Button) nach oben gefüllt, jede Reihe horizontal zentriert, alle
+    /// Pillen einheitlich breit. Weil die Positionen als EIN Gitter
+    /// berechnet werden (statt pro Pille unabhängig wie bei den
+    /// Radial-Varianten), sind Überlappungen zwischen Pillen per
+    /// Konstruktion ausgeschlossen -- der Abstand benachbarter Zentren ist
+    /// immer exakt Pillenbreite+gap bzw. rowPitch.
+    private func mindMapSlots(count: Int, containerWidth: CGFloat) -> [MindMapSlot] {
+        guard count > 0 else { return [] }
+        let cols = mindMapColumns(containerWidth: containerWidth)
+        let usable = containerWidth - 2 * MindMapGeometry.edgeBuffer
+        // Bei weniger Pillen als Spalten dürfen die Pillen breiter sein
+        // (z.B. 2 Pillen à 150pt statt 2 à 113pt).
+        let effectiveCols = min(cols, count)
+        let pillWidth = min(
+            MindMapGeometry.maxPillWidth,
+            (usable - CGFloat(effectiveCols - 1) * MindMapGeometry.gap) / CGFloat(effectiveCols)
+        )
 
-        return Button {
+        var slots: [MindMapSlot] = []
+        var placed = 0
+        var row = 0
+        while placed < count {
+            let inThisRow = min(cols, count - placed)
+            let rowWidth = CGFloat(inThisRow) * pillWidth + CGFloat(inThisRow - 1) * MindMapGeometry.gap
+            let y = -(MindMapGeometry.firstRowDistance + MindMapGeometry.rowPitch * CGFloat(row))
+            for column in 0..<inThisRow {
+                let x = -rowWidth / 2 + pillWidth / 2 + CGFloat(column) * (pillWidth + MindMapGeometry.gap)
+                slots.append(MindMapSlot(x: x, y: y, width: pillWidth))
+            }
+            placed += inThisRow
+            row += 1
+        }
+        return slots
+    }
+
+    /// Höhe des Pillen-Bereichs oberhalb der Button-Mitte (oberste Reihe +
+    /// halbe Pillenhöhe + Luft).
+    private func mindMapTopExtent(rowCount: Int) -> CGFloat {
+        guard rowCount > 0 else { return 0 }
+        return MindMapGeometry.firstRowDistance
+            + MindMapGeometry.rowPitch * CGFloat(rowCount - 1)
+            + MindMapGeometry.pillHeight / 2
+            + MindMapGeometry.topPadding
+    }
+
+    /// Verschiebt den Button aus der ZStack-Mitte nach unten, damit der
+    /// (nach oben wachsende) Pillen-Fächer und der Button zusammen vertikal
+    /// zentriert sind, statt dass oben der Platz ausgeht während unten
+    /// Leerraum bleibt.
+    private func mindMapButtonShift(rowCount: Int) -> CGFloat {
+        guard rowCount > 0 else { return 0 }
+        return (mindMapTopExtent(rowCount: rowCount) - MindMapGeometry.buttonBottomExtent) / 2
+    }
+
+    /// Hero-Höhe: mindestens die bisherigen 340pt, wächst aber mit, sobald
+    /// viele Unterordner mehr Reihen brauchen -- dadurch bleibt Invariante
+    /// (1) auch bei beliebig vielen vom User erstellten Unterordnern erfüllt
+    /// (die Section wird höher und scrollt in der List, nichts ragt heraus).
+    private func mindMapHeroHeight(rowCount: Int) -> CGFloat {
+        max(340, mindMapTopExtent(rowCount: rowCount) + MindMapGeometry.buttonBottomExtent)
+    }
+
+    /// Eine einzelne Unterordner-Pille, die beim Antippen von "Lernen" per
+    /// Spring-Animation aus der Button-Mitte an ihre berechnete Slot-Position
+    /// fährt (gestaffelt über `index`) -- gescoped auf den im
+    /// Oberordner-Dropdown gewählten Ordner (`mindMapSubfolders`).
+    private func subfolderMindMapNode(_ subfolder: Subfolder, index: Int, slot: MindMapSlot, buttonShift: CGFloat) -> some View {
+        Button {
             // Springt DIREKT in Hands-free (Voice only) für GENAU diesen
             // Unterordner (Simon: "will ich direkt ins 'Handsfree Voice
             // only' geschickt werden, allerdings ohne die Abfrage welcher
@@ -335,14 +382,23 @@ struct FolderListView: View {
                 .font(.footnote.bold())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
-                .frame(maxWidth: pillWidth - 28)
+                // maxWidth = Slot-Budget minus horizontales Padding (2×14):
+                // kurze Namen bekommen eine snugge Pille, lange schrumpfen/
+                // kürzen INNERHALB des Budgets statt es zu sprengen.
+                .frame(maxWidth: slot.width - 28)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(Capsule().fill(.thickMaterial))
                 .overlay(Capsule().stroke(Color.accentColor.opacity(0.4), lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .offset(x: dx, y: dy)
+        // Eingeklappt sitzt die Pille auf der (verschobenen) Button-Mitte,
+        // ausgeklappt auf ihrem Slot -- dieselbe "fährt aus dem Button
+        // heraus"-Optik wie bei der Radial-Variante.
+        .offset(
+            x: showFolderMindMap ? slot.x : 0,
+            y: buttonShift + (showFolderMindMap ? slot.y : 0)
+        )
         .scaleEffect(showFolderMindMap ? 1 : 0.01)
         .opacity(showFolderMindMap ? 1 : 0)
         .animation(
