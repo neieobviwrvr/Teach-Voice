@@ -26,6 +26,13 @@ struct FolderListView: View {
     // verkleinert bzw. nach unten verschoben (siehe `heroSection`,
     // `handsFreeSection`, `folderRows` weiter unten in `mainList`).
     @State private var showFolderMindMap = false
+    // Ersetzt den statischen "Meine Ordner"-Titel: ein Dropdown oben links
+    // wählt den "Oberordner" (= `Folder`), dessen UNTERORDNER dann im
+    // "Lernen"-Mindmap herausfahren (Simons Vorgabe). Bei aktuell max. 1
+    // Ordner/User (`maxFoldersPerUser`) zeigt das Dropdown heute meist nur
+    // eine Option, ist aber bewusst allgemein gebaut für den Fall, dass das
+    // Limit später gelockert wird.
+    @State private var selectedFolder: Folder?
 
     // "Hands-free (Voice only)": Unterordner-Auswahl passiert per Sprachmenü
     // INNERHALB der View – hier wird nur die Unterordner-Liste vorgeladen und
@@ -58,7 +65,7 @@ struct FolderListView: View {
 
     var body: some View {
         NavigationStack {
-            withHandsFreeDialogs(withCoreAlerts(navigationList))
+            withFolderSelection(withHandsFreeDialogs(withCoreAlerts(navigationList)))
         }
     }
 
@@ -76,13 +83,20 @@ struct FolderListView: View {
             .navigationDestination(for: Folder.self) { folder in
                 SubfolderListView(folder: folder)
             }
+            .navigationDestination(for: Subfolder.self) { subfolder in
+                FlashcardListView(subfolder: subfolder)
+            }
             .navigationDestination(item: $voiceOnlySubfolders) { subfolders in
                 HandsFreeStudyView(subfolders: subfolders, strictness: voiceOnlyStrictness)
             }
             .navigationDestination(item: $eigenbewertungCards) { cards in
                 HandsFreeSelfAssessmentStudyView(cards: cards, title: eigenbewertungTitle, strictness: eigenbewertungStrictness)
             }
-            .navigationTitle("Meine Ordner")
+            // Kein statischer Titel mehr -- das Oberordner-Dropdown in
+            // `mainToolbar` übernimmt diese Rolle (Simons Vorgabe: "statt
+            // 'Meine Ordner' ein Drop-Down-Menu"). `.inline`, damit die Bar
+            // trotz fehlendem großen Titel kompakt bleibt.
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { mainToolbar }
             .safeAreaInset(edge: .bottom) { addFolderBottomButton }
             .overlay { emptyStateOverlay }
@@ -93,6 +107,23 @@ struct FolderListView: View {
             .refreshable { await library.loadFolders() }
             .sheet(isPresented: $showProfile) {
                 ProfileView(mode: mode)
+            }
+    }
+
+    /// Ausgelagert (statt weiterer Modifier in `navigationList`), gleicher
+    /// Grund wie bei `withCoreAlerts`/`withHandsFreeDialogs`: der
+    /// Type-Checker ist in dieser View schon einmal an einer zu langen
+    /// verketteten Modifier-Kette gescheitert.
+    @ViewBuilder
+    private func withFolderSelection<Content: View>(_ content: Content) -> some View {
+        content
+            .onChange(of: library.folders) { _, newFolders in
+                syncSelectedFolder(with: newFolders)
+            }
+            .task(id: selectedFolder?.id) {
+                if let selectedFolder {
+                    await library.loadSubfolders(for: selectedFolder)
+                }
             }
     }
 
@@ -119,6 +150,16 @@ struct FolderListView: View {
 
     // MARK: - Hero: zentraler "Lernen"-Button mit Mindmap-Reveal
 
+    /// Die Unterordner des aktuell im Oberordner-Dropdown gewählten Ordners
+    /// -- das ist jetzt die Grundlage für den Mindmap-Reveal (statt vorher
+    /// die Ordner selbst), siehe Simons Vorgabe: "in der Animation beim
+    /// 'Lernen'-Button nur die Unterordner herausgefahren, die in dem
+    /// entsprechenden ausgewählten Oberordner [...] gehören".
+    private var mindMapSubfolders: [Subfolder] {
+        guard let selectedFolder else { return [] }
+        return library.subfolders(in: selectedFolder)
+    }
+
     /// Nimmt bewusst viel vertikalen Platz ein (füllt den sichtbaren Bereich
     /// beim Öffnen der App), damit Hands-free-Buttons und Ordnerliste
     /// darunter erst durch Scrollen sichtbar werden -- Simons ausdrückliche
@@ -129,8 +170,8 @@ struct FolderListView: View {
     private var heroSection: some View {
         Section {
             ZStack {
-                ForEach(Array(library.folders.enumerated()), id: \.element.id) { index, folder in
-                    folderMindMapNode(folder, index: index, total: library.folders.count)
+                ForEach(Array(mindMapSubfolders.enumerated()), id: \.element.id) { index, subfolder in
+                    subfolderMindMapNode(subfolder, index: index, total: mindMapSubfolders.count)
                 }
                 learnButton
             }
@@ -156,27 +197,28 @@ struct FolderListView: View {
                 .shadow(radius: showFolderMindMap ? 12 : 4)
         }
         .buttonStyle(.plain)
-        .disabled(library.folders.isEmpty)
-        .opacity(library.folders.isEmpty ? 0.5 : 1)
+        .disabled(mindMapSubfolders.isEmpty)
+        .opacity(mindMapSubfolders.isEmpty ? 0.5 : 1)
     }
 
-    /// Ein einzelner Ordner-Knoten, der beim Antippen von "Lernen"
-    /// mindmap-artig aus der Button-Mitte herausfährt. Verteilung: ein
-    /// Bogen von 180° (links) über oben bis 0° (rechts) -- bei nur einem
-    /// Ordner (aktuell der Regelfall, siehe `maxFoldersPerUser`) landet der
-    /// Knoten mittig oberhalb des Buttons; bei mehreren Ordnern fächern sie
-    /// sich darüber auf. Radius/Höhe wurden hier ohne echtes Gerät gewählt
-    /// (kein lokaler Simulator verfügbar) -- ggf. nach dem ersten Test noch
-    /// nachjustieren.
-    private func folderMindMapNode(_ folder: Folder, index: Int, total: Int) -> some View {
+    /// Ein einzelner Unterordner-Knoten, der beim Antippen von "Lernen"
+    /// mindmap-artig aus der Button-Mitte herausfährt -- gescoped auf den im
+    /// Oberordner-Dropdown gewählten Ordner (`mindMapSubfolders`). Verteilung:
+    /// ein Bogen von 180° (links) über oben bis 0° (rechts) -- bei nur einem
+    /// Unterordner landet der Knoten mittig oberhalb des Buttons; bei
+    /// mehreren fächern sie sich darüber auf (der eigentlich relevante Fall,
+    /// da Unterordner bewusst unbegrenzt sind). Radius/Höhe wurden hier ohne
+    /// echtes Gerät gewählt (kein lokaler Simulator verfügbar) -- ggf. nach
+    /// dem ersten Test noch nachjustieren.
+    private func subfolderMindMapNode(_ subfolder: Subfolder, index: Int, total: Int) -> some View {
         let angleDegrees: Double = total <= 1 ? 0 : -90 + (180.0 / Double(total - 1)) * Double(index)
         let angleRadians = angleDegrees * .pi / 180
         let radius: CGFloat = 120
         let dx = showFolderMindMap ? radius * sin(angleRadians) : 0
         let dy = showFolderMindMap ? -radius * cos(angleRadians) : 0
 
-        return NavigationLink(value: folder) {
-            Text(folder.name)
+        return NavigationLink(value: subfolder) {
+            Text(subfolder.name)
                 .font(.footnote.bold())
                 .lineLimit(1)
                 .padding(.horizontal, 14)
@@ -282,12 +324,50 @@ struct FolderListView: View {
             }
             .disabled(isFull)
         }
+        // Ersetzt den früheren statischen Titel "Meine Ordner" (Simons
+        // Vorgabe). Zeigt den Namen des gewählten Oberordners + Chevron;
+        // Auswahl bestimmt, welche Unterordner im "Lernen"-Mindmap
+        // herausfahren (siehe `mindMapSubfolders`). Zuerst deklariert, damit
+        // es als das linkeste Element erscheint.
+        ToolbarItem(placement: .topBarLeading) {
+            Menu {
+                ForEach(library.folders) { folder in
+                    Button {
+                        selectedFolder = folder
+                    } label: {
+                        if folder.id == selectedFolder?.id {
+                            Label(folder.name, systemImage: "checkmark")
+                        } else {
+                            Text(folder.name)
+                        }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(selectedFolder?.name ?? "Ordner")
+                        .font(.headline)
+                        .lineLimit(1)
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                }
+            }
+            .disabled(library.folders.isEmpty)
+        }
         ToolbarItem(placement: .topBarLeading) {
             Button {
                 showProfile = true
             } label: {
                 Label("Profil", systemImage: "person.crop.circle")
             }
+        }
+    }
+
+    /// Wählt automatisch einen Oberordner aus, sobald welche geladen sind
+    /// (aktuell praktisch immer der einzige, siehe `maxFoldersPerUser`), und
+    /// fängt den Fall ab, dass der bisher gewählte Ordner gelöscht wurde.
+    private func syncSelectedFolder(with folders: [Folder]) {
+        if selectedFolder == nil || !folders.contains(where: { $0.id == selectedFolder?.id }) {
+            selectedFolder = folders.first
         }
     }
 
