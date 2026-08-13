@@ -171,41 +171,32 @@ struct FolderListView: View {
     /// Vorgabe. `.listRowInsets`/`.listRowBackground(.clear)` entfernen die
     /// normale List-Zeilen-Optik.
     ///
-    /// WICHTIG (Fix nach Simons Feedback -- Pillen liefen auf dem Gerät oben
-    /// über die Nav-Bar hinaus UND links/rechts aus dem Bild): die vorherige
-    /// Version positionierte die Unterordner-Pillen per Trigonometrie
-    /// (Radius+Winkel) und `.offset()` frei in einem ZStack mit fester Höhe
-    /// (340pt) -- rein geschätzte Pixelwerte ohne echten Bezug zur
-    /// tatsächlichen Bildschirmbreite/Pillen-Textlänge, die auf schmalen
-    /// Geräten oder bei langen Unterordner-Namen zuverlässig überliefen.
-    /// `.offset()`/`.scaleEffect()` verändern nur die Darstellung, nicht die
-    /// von SwiftUI für das Layout gemeldete Größe -- das Elternview reserviert
-    /// dafür also gar keinen echten Platz.
-    ///
-    /// Jetzt: `FlowLayout` (s.u.) ist ein echtes SwiftUI-`Layout`, das die
-    /// Pillen zeilenweise umbricht und dabei NIE breiter wird als die vom
-    /// Elternview vorgegebene Breite -- garantiert unabhängig von
-    /// Bildschirmgröße/iOS-Version, weil es die tatsächlich gemessene Größe
-    /// jeder Pille verwendet statt geschätzter Radius-Werte. Die Hero-Section
-    /// hat dadurch auch keine feste Höhe mehr, sondern wächst/schrumpft mit
-    /// dem tatsächlichen Inhalt (0 Pillen bis beliebig viele).
+    /// Simon wollte die ursprüngliche Radial-Animation (Pillen fahren wie bei
+    /// einer Mindmap rund um den "Lernen"-Button heraus) ausdrücklich ZURÜCK
+    /// -- die zwischenzeitliche FlowLayout-Variante (Pillen brechen als Liste
+    /// unter dem Button um) war ihm optisch nicht das Gewünschte. Der
+    /// eigentliche Bug vorher war aber NICHT der Radial-Ansatz an sich,
+    /// sondern dass Radius (120pt) und Höhe (340pt) reine Rateswerte ohne
+    /// Bezug zur tatsächlichen Bildschirmgröße waren. Fix jetzt: ein
+    /// `GeometryReader` liefert die ECHTE verfügbare Breite/Höhe dieser
+    /// Section, `subfolderMindMapNode` leitet den Radius SICHER daraus ab
+    /// (siehe dortiger Kommentar) -- passt sich dadurch automatisch an jede
+    /// Displaygröße/iOS-Version an, statt an einen fixen Wert gebunden zu
+    /// sein.
     @ViewBuilder
     private var heroSection: some View {
         Section {
-            VStack(spacing: 20) {
-                learnButton
-                if showFolderMindMap {
-                    FlowLayout(spacing: 8, lineSpacing: 8) {
-                        ForEach(mindMapSubfolders) { subfolder in
-                            subfolderPill(subfolder)
-                        }
+            GeometryReader { geo in
+                ZStack {
+                    ForEach(Array(mindMapSubfolders.enumerated()), id: \.element.id) { index, subfolder in
+                        subfolderMindMapNode(subfolder, index: index, total: mindMapSubfolders.count, containerSize: geo.size)
                     }
-                    .transition(.scale(scale: 0.85).combined(with: .opacity))
+                    learnButton
                 }
+                .frame(width: geo.size.width, height: geo.size.height)
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 16)
-            .padding(.vertical, 28)
+            .frame(height: 340)
             .listRowInsets(EdgeInsets())
             .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
@@ -230,32 +221,67 @@ struct FolderListView: View {
         .opacity(mindMapSubfolders.isEmpty ? 0.5 : 1)
     }
 
-    /// Eine einzelne Unterordner-Pille innerhalb der `FlowLayout` im
-    /// "Lernen"-Reveal -- gescoped auf den im Oberordner-Dropdown gewählten
-    /// Ordner (`mindMapSubfolders`). Tippen springt DIREKT in Hands-free
-    /// (Voice only) für GENAU diesen Unterordner (Simon: "will ich direkt
-    /// ins 'Handsfree Voice only' geschickt werden, allerdings ohne die
-    /// Abfrage welcher Ordner gelernt werden soll") -- reicht dafür bewusst
-    /// dieselbe Strictness-Auswahl (`showVoiceOnlyStrictnessPicker`) und
-    /// denselben Navigations-Mechanismus (`voiceOnlySubfolders`) wie der
-    /// "Voice only"-Button in `handsFreeSection`, nur mit genau einem
-    /// vorausgewählten Unterordner statt allen. `HandsFreeStudyView`
-    /// überspringt die Sprach-Nachfrage automatisch, sobald ihr nur ein
-    /// einziger Unterordner übergeben wird (siehe `selectSubfolderViaVoice`).
-    private func subfolderPill(_ subfolder: Subfolder) -> some View {
-        Button {
+    /// Ein einzelner Unterordner-Knoten, der beim Antippen von "Lernen"
+    /// mindmap-artig aus der Button-Mitte herausfährt -- gescoped auf den im
+    /// Oberordner-Dropdown gewählten Ordner (`mindMapSubfolders`). Verteilung:
+    /// ein Bogen von 180° (links) über oben bis 0° (rechts) -- bei nur einem
+    /// Unterordner landet der Knoten mittig oberhalb des Buttons; bei
+    /// mehreren fächern sie sich darüber auf.
+    ///
+    /// `containerSize` (von `heroSection`s `GeometryReader` gemessen, NICHT
+    /// geraten) bestimmt den Radius: nie größer als die Hälfte der jeweiligen
+    /// Container-Dimension minus eines Sicherheitsabstands für die Pille
+    /// selbst (Breite/Höhe der Pille + Puffer) -- getrennt für Breite und
+    /// Höhe berechnet, weil eine Pille breiter als hoch ist. Dadurch bleibt
+    /// JEDE Pille bei JEDEM Winkel innerhalb der Section, unabhängig von
+    /// Bildschirmgröße/iOS-Version (Simons Vorgabe nach dem Positionierungs-
+    /// Bug: "abhängig von IOS-Version und Displaygröße").
+    private func subfolderMindMapNode(_ subfolder: Subfolder, index: Int, total: Int, containerSize: CGSize) -> some View {
+        let angleDegrees: Double = total <= 1 ? 0 : -90 + (180.0 / Double(total - 1)) * Double(index)
+        let angleRadians = angleDegrees * .pi / 180
+
+        // Geschätzte halbe Pillen-Ausdehnung als Sicherheitsabstand -- eine
+        // Pille kann bei langen Unterordner-Namen bis zu ~170pt breit werden,
+        // ist aber immer nur ~36pt hoch (Capsule, .footnote, Padding 10).
+        let maxRadiusFromWidth = containerSize.width / 2 - 85
+        let maxRadiusFromHeight = containerSize.height / 2 - 30
+        let radius = max(60, min(maxRadiusFromWidth, maxRadiusFromHeight))
+
+        let dx = showFolderMindMap ? radius * sin(angleRadians) : 0
+        let dy = showFolderMindMap ? -radius * cos(angleRadians) : 0
+
+        return Button {
+            // Springt DIREKT in Hands-free (Voice only) für GENAU diesen
+            // Unterordner (Simon: "will ich direkt ins 'Handsfree Voice
+            // only' geschickt werden, allerdings ohne die Abfrage welcher
+            // Ordner gelernt werden soll") -- reicht dafür bewusst dieselbe
+            // Strictness-Auswahl (`showVoiceOnlyStrictnessPicker`) und
+            // denselben Navigations-Mechanismus (`voiceOnlySubfolders`) wie
+            // der "Voice only"-Button in `handsFreeSection`, nur mit genau
+            // einem vorausgewählten Unterordner statt allen.
+            // `HandsFreeStudyView` überspringt die Sprach-Nachfrage
+            // automatisch, sobald ihr nur ein einziger Unterordner übergeben
+            // wird (siehe `selectSubfolderViaVoice`).
             pendingVoiceOnlySubfolders = [subfolder]
             showVoiceOnlyStrictnessPicker = true
         } label: {
             Text(subfolder.name)
                 .font(.footnote.bold())
                 .lineLimit(1)
+                .minimumScaleFactor(0.7)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(Capsule().fill(.thickMaterial))
                 .overlay(Capsule().stroke(Color.accentColor.opacity(0.4), lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .offset(x: dx, y: dy)
+        .scaleEffect(showFolderMindMap ? 1 : 0.01)
+        .opacity(showFolderMindMap ? 1 : 0)
+        .animation(
+            .spring(response: 0.45, dampingFraction: 0.68).delay(Double(index) * 0.06),
+            value: showFolderMindMap
+        )
     }
 
     // MARK: - Hands-free (kompakt, siehe Simons Vorgabe: verkleinert)
