@@ -89,6 +89,11 @@ struct HandsFreeStudyView: View {
     // `selectSubfolderViaVoice`, nach zwei erfolglosen Sprachversuchen).
     @State private var showVisualSubfolderPicker = false
     @State private var subfolderPickerContinuation: CheckedContinuation<Subfolder?, Never>?
+    /// Der Hintergrund-Task, der `announceSubfoldersAndListen` antreibt
+    /// (Ansage -> Signalton -> Zuhören -> Transkription). Gewinnt stattdessen
+    /// ein Tap während der Ansage (siehe `chooseViaButton`), wird dieser Task
+    /// abgebrochen statt verwaist weiterzulaufen.
+    @State private var announceListenTask: Task<Void, Never>?
     @State private var showVisualYesNoFallback = false
     @State private var yesNoContinuation: CheckedContinuation<Bool, Never>?
 
@@ -238,21 +243,40 @@ struct HandsFreeStudyView: View {
         }
     }
 
-    /// Tap auf einen der sichtbaren Unterordner-Buttons während der Auswahl.
-    /// Macht ZWEI Dinge, je nachdem in welcher Phase wir gerade sind:
-    /// 1. Merkt sich die Wahl als Fallback UND beendet eine noch laufende
-    ///    Aufnahme sofort (statt bis zum natürlichen Stille-Timeout zu
-    ///    warten) -- greift während `announceSubfoldersAndListen`.
-    /// 2. Löst direkt eine wartende Continuation auf, falls gerade NUR noch
-    ///    auf einen Tap gewartet wird (kein aktives Zuhören mehr) -- greift
-    ///    im letzten Schritt von `selectSubfolderViaVoice`, nach zwei
-    ///    erfolglosen Sprachversuchen.
+    /// Tap auf einen der sichtbaren Unterordner-Buttons -- verhält sich je
+    /// nach Phase unterschiedlich (Simons ausdrückliche Vorgabe: Buttons
+    /// sollen schon WÄHREND die Ansage noch läuft klickbar sein und sofort
+    /// wirken, nicht erst nachdem der Satz zu Ende gesprochen wurde):
+    /// 1. Während die Ansage noch läuft (`isListening == false`, aber eine
+    ///    Auswahl steht noch aus): löst SOFORT auf -- es gibt hier noch
+    ///    keine konkurrierende Spracheingabe, die Vorrang haben müsste.
+    /// 2. Während aktiv zugehört wird (`isListening == true`): merkt sich
+    ///    die Wahl nur als Fallback und beendet die Aufnahme sofort (statt
+    ///    bis zum natürlichen Stille-Timeout zu warten) -- ein zeitgleicher
+    ///    Sprach-Treffer behält weiterhin Vorrang (Simons ausdrückliche
+    ///    Vorgabe von weiter oben im Chat).
+    /// 3. Nach zwei erfolglosen Sprachversuchen (`waitForButtonTapOnly`,
+    ///    kein aktives Zuhören mehr): löst ebenfalls sofort auf.
     private func chooseViaButton(_ subfolder: Subfolder) {
         pendingButtonChoice = subfolder
-        recorder.requestManualStop()
-        speech.stop() // falls noch mitten in der Ansage getippt wird
+        if isListening {
+            recorder.requestManualStop()
+        } else {
+            speech.stop()
+            resolveAnnounceListen(subfolder)
+        }
+    }
+
+    /// Löst eine laufende `announceSubfoldersAndListen`-Continuation auf UND
+    /// bricht den zugehörigen Hintergrund-Task ab, falls er noch läuft --
+    /// sonst würde der verwaist im Hintergrund weiterlaufen (noch die
+    /// Ansage zu Ende abwarten, ggf. transkribieren) und am Ende versuchen,
+    /// dieselbe längst aufgelöste Continuation ein zweites Mal zu bedienen.
+    private func resolveAnnounceListen(_ subfolder: Subfolder?) {
         subfolderPickerContinuation?.resume(returning: subfolder)
         subfolderPickerContinuation = nil
+        announceListenTask?.cancel()
+        announceListenTask = nil
     }
 
     // MARK: - Sprachmenü-Ablauf
@@ -368,38 +392,49 @@ struct HandsFreeStudyView: View {
     }
 
     /// Ansage läuft KOMPLETT durch (die Unterordner-Buttons bleiben dabei
-    /// die ganze Zeit sichtbar/antippbar, ein Tap geht immer sofort), DANN
-    /// ein kurzer Signalton, DANN erst startet das Zuhören -- bewusst kein
-    /// gleichzeitiges Aufnehmen+Ansagen mehr (Simons Entscheidung, siehe
-    /// Datei-Kopf-Kommentar: ohne echte Echo-Unterdrückung ließ sich die
-    /// eigene Stimme der App nicht zuverlässig von Umgebungslärm
-    /// unterscheiden). Ein per Sprache erkannter Treffer hat Vorrang vor
-    /// einem während des Zuhörens getippten Button; nur wenn die
-    /// Spracherkennung nichts Verwertbares liefert, zählt der Button.
+    /// die ganze Zeit sichtbar/antippbar), DANN ein kurzer Signalton, DANN
+    /// erst startet das Zuhören -- bewusst kein gleichzeitiges
+    /// Aufnehmen+Ansagen mehr (Simons Entscheidung, siehe Datei-Kopf-
+    /// Kommentar: ohne echte Echo-Unterdrückung ließ sich die eigene Stimme
+    /// der App nicht zuverlässig von Umgebungslärm unterscheiden).
+    ///
+    /// Ein Tap auf einen Unterordner-Button wirkt während der Ansage/dem
+    /// Signalton SOFORT (siehe `chooseViaButton`, Fall 1) -- über eine
+    /// Continuation, die parallel zum eigentlichen Ablauf läuft. WÄHREND
+    /// aktiv zugehört wird, beendet ein Tap die Aufnahme nur vorzeitig,
+    /// erzwingt die Auswahl aber NICHT sofort (`chooseViaButton`, Fall 2) --
+    /// ein per Sprache erkannter Treffer behält dort weiterhin Vorrang
+    /// (Simons ausdrückliche Vorgabe).
     private func announceSubfoldersAndListen(_ announcement: String) async -> Subfolder? {
         pendingButtonChoice = nil
-        await speech.speakAndWait(announcement)
-        if Task.isCancelled { return nil }
-        await soundPlayer.play(.ready)
-        if Task.isCancelled { return nil }
+        return await withCheckedContinuation { (continuation: CheckedContinuation<Subfolder?, Never>) in
+            subfolderPickerContinuation = continuation
+            announceListenTask = Task {
+                await speech.speakAndWait(announcement)
+                if Task.isCancelled { return }
+                await soundPlayer.play(.ready)
+                if Task.isCancelled { return }
+                guard subfolderPickerContinuation != nil else { return } // schon per Tap aufgelöst
 
-        statusText = "Höre zu…"
-        isListening = true
-        let recording = await recorder.recordUntilSilence(silenceTimeout: 3.0)
-        isListening = false
+                statusText = "Höre zu…"
+                isListening = true
+                let recording = await recorder.recordUntilSilence(silenceTimeout: 3.0)
+                isListening = false
+                guard subfolderPickerContinuation != nil else { return } // während Zuhören per Tap aufgelöst
+                if Task.isCancelled { return }
 
-        if Task.isCancelled { return nil }
+                var matched: Subfolder?
+                // `lastRecordingDetectedSpeech` spart die Transkription (und
+                // damit Latenz), wenn erkennbar gar nichts gesagt wurde --
+                // z.B. weil der User nur einen Button getippt hat.
+                if let recording, recorder.lastRecordingDetectedSpeech,
+                   let text = await transcriber.transcribe(audioURL: recording), !text.isEmpty {
+                    matched = SubfolderVoiceMatcher.match(transcript: text, options: subfolders)
+                }
 
-        var matched: Subfolder?
-        // `lastRecordingDetectedSpeech` spart die Transkription (und damit
-        // Latenz), wenn erkennbar gar nichts gesagt wurde -- z.B. weil der
-        // User nur einen Button getippt hat.
-        if let recording, recorder.lastRecordingDetectedSpeech,
-           let text = await transcriber.transcribe(audioURL: recording), !text.isEmpty {
-            matched = SubfolderVoiceMatcher.match(transcript: text, options: subfolders)
+                resolveAnnounceListen(matched ?? pendingButtonChoice)
+            }
         }
-
-        return matched ?? pendingButtonChoice
     }
 
     /// Letzter Schritt, falls Sprache zweimal nichts Verwertbares lieferte:
@@ -609,11 +644,13 @@ struct HandsFreeStudyView: View {
         speech.stop()
         if recorder.isRecording { _ = recorder.stopRecording() }
         AudioSessionCoordinator.deactivate()
-        // Verwaisten Sprach-Task beenden, statt ihn im Hintergrund weiter TTS/
-        // Mikrofon benutzen zu lassen, obwohl der Modus gerade verlassen wird
-        // ("Beenden"-Button, Zurück-Navigation via .onDisappear).
+        // Verwaiste Hintergrund-Tasks beenden, statt sie im Hintergrund weiter
+        // TTS/Mikrofon benutzen zu lassen, obwohl der Modus gerade verlassen
+        // wird ("Beenden"-Button, Zurück-Navigation via .onDisappear).
         pendingContinueTask?.cancel()
         pendingContinueTask = nil
+        announceListenTask?.cancel()
+        announceListenTask = nil
         // Offene Continuations nicht verwaist lassen (sonst nur eine
         // Konsolen-Warnung, aber sauberer, sie definiert aufzulösen).
         nextStepContinuation?.resume(returning: nil)
