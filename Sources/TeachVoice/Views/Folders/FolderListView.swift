@@ -171,25 +171,25 @@ struct FolderListView: View {
     /// Vorgabe. `.listRowInsets`/`.listRowBackground(.clear)` entfernen die
     /// normale List-Zeilen-Optik.
     ///
-    /// Simon wollte die ursprüngliche Radial-Animation (Pillen fahren wie bei
-    /// einer Mindmap rund um den "Lernen"-Button heraus) ausdrücklich ZURÜCK
-    /// -- die zwischenzeitliche FlowLayout-Variante (Pillen brechen als Liste
-    /// unter dem Button um) war ihm optisch nicht das Gewünschte. Der
-    /// eigentliche Bug vorher war aber NICHT der Radial-Ansatz an sich,
-    /// sondern dass Radius (120pt) und Höhe (340pt) reine Rateswerte ohne
-    /// Bezug zur tatsächlichen Bildschirmgröße waren. Fix jetzt: ein
-    /// `GeometryReader` liefert die ECHTE verfügbare Breite/Höhe dieser
-    /// Section, `subfolderMindMapNode` leitet den Radius SICHER daraus ab
-    /// (siehe dortiger Kommentar) -- passt sich dadurch automatisch an jede
-    /// Displaygröße/iOS-Version an, statt an einen fixen Wert gebunden zu
-    /// sein.
+    /// Simon wollte die Radial-Animation (Pillen fahren wie bei einer Mindmap
+    /// rund um den "Lernen"-Button heraus) ausdrücklich behalten, aber
+    /// GARANTIERT weder über den Bildschirmrand hinausragend NOCH hinter dem
+    /// Button verschwindend. `GeometryReader` liefert dafür die ECHTE
+    /// verfügbare Breite/Höhe dieser Section; `safeMaxAngleDegrees` (unten)
+    /// und `subfolderMindMapNode` leiten daraus Winkel-Spannweite und
+    /// Pillen-Größe her (siehe dortige Kommentare für die Begründung) --
+    /// passt sich automatisch an jede Displaygröße/iOS-Version an.
     @ViewBuilder
     private var heroSection: some View {
         Section {
             GeometryReader { geo in
+                let maxAngle = safeMaxAngleDegrees(containerWidth: geo.size.width)
                 ZStack {
                     ForEach(Array(mindMapSubfolders.enumerated()), id: \.element.id) { index, subfolder in
-                        subfolderMindMapNode(subfolder, index: index, total: mindMapSubfolders.count, containerSize: geo.size)
+                        subfolderMindMapNode(
+                            subfolder, index: index, total: mindMapSubfolders.count,
+                            containerSize: geo.size, maxAngleDegrees: maxAngle
+                        )
                     }
                     learnButton
                 }
@@ -221,31 +221,97 @@ struct FolderListView: View {
         .opacity(mindMapSubfolders.isEmpty ? 0.5 : 1)
     }
 
+    /// "Lernen"-Button: 130pt Durchmesser -> 65pt Radius. Als Konstante,
+    /// weil sowohl `safeMaxAngleDegrees` als auch `subfolderMindMapNode` sie
+    /// brauchen und beide von genau diesem Wert ausgehen müssen wie
+    /// `learnButton`s `.frame(width: 130, height: 130)` oben.
+    private let mindMapButtonRadius: CGFloat = 65
+    private let mindMapDesiredRadius: CGFloat = 120
+    private let mindMapPillHalfHeight: CGFloat = 18 // .footnote, 10pt vertikales Padding -> ~36pt hoch
+
+    /// Größter Winkel (von der Senkrechten aus, in Grad), bei dem eine
+    /// "normal breite" Pille (`assumedPillHalfWidth`) beim Wunsch-Radius
+    /// (`mindMapDesiredRadius`) GLEICHZEITIG (a) den "Lernen"-Button nicht
+    /// überlappt und (b) nicht über den Bildschirmrand hinausragt.
+    ///
+    /// Grund für diese Vorab-Berechnung: bei nur 2 Unterordnern (Simons
+    /// Screenshot) landen beide Knoten mit der alten festen ±90°-Spannweite
+    /// GENAU auf Höhe des Buttons -- exakt die Position, an der am wenigsten
+    /// Platz ist (der Button selbst ist dort am "breitesten" im Weg, UND
+    /// horizontal ist der Bildschirm am schnellsten zu Ende). Ein 130pt
+    /// breiter Button plus eine ~150pt breite Pille auf jeder Seite braucht
+    /// schlicht mehr als die ~380-430pt Breite eines Handy-Screens her --
+    /// das ist keine Rechenungenauigkeit, sondern reine Geometrie. Lösung:
+    /// die Knoten NICHT stur auf ±90° verteilen, sondern auf den größten
+    /// Winkel, der nachweislich noch für beide Regeln reicht (rückt bei
+    /// schmalen Screens automatisch enger zusammen Richtung "oberhalb des
+    /// Buttons", wo mehr Platz ist, statt seitlich daneben).
+    ///
+    /// Rechenweg: `A·sinθ + B·cosθ = R·sin(θ+φ)` (Hilfswinkel-Methode) für
+    /// die Button-Bedingung, ein einfacher `arcsin` für die Rand-Bedingung;
+    /// der kleinere der beiden Winkel gewinnt.
+    private func safeMaxAngleDegrees(containerWidth: CGFloat) -> Double {
+        let assumedPillHalfWidth: CGFloat = 50 // ~100pt Pille, reicht für die meisten Unterordner-Namen ohne Schrumpfen
+        let clearanceGap: CGFloat = 12
+        let edgeBuffer: CGFloat = 8
+
+        // (a) Button-Bedingung: assumedPillHalfWidth·sinθ + pillHalfHeight·cosθ <= budget
+        let budget = mindMapDesiredRadius - mindMapButtonRadius - clearanceGap
+        let amplitude = (assumedPillHalfWidth * assumedPillHalfWidth + mindMapPillHalfHeight * mindMapPillHalfHeight).squareRoot()
+        let phi = atan2(Double(mindMapPillHalfHeight), Double(assumedPillHalfWidth))
+        let angleFromButton: Double
+        if amplitude <= 0 || budget >= amplitude {
+            angleFromButton = 90
+        } else if budget <= -amplitude {
+            angleFromButton = 0
+        } else {
+            let theta = asin(Double(budget / amplitude)) - phi
+            angleFromButton = max(0, min(90, theta * 180 / .pi))
+        }
+
+        // (b) Rand-Bedingung: desiredRadius·sinθ + assumedPillHalfWidth + edgeBuffer <= containerWidth/2
+        let edgeSin = (containerWidth / 2 - assumedPillHalfWidth - edgeBuffer) / mindMapDesiredRadius
+        let angleFromEdge: Double = edgeSin >= 1 ? 90 : (edgeSin <= 0 ? 0 : asin(Double(edgeSin)) * 180 / .pi)
+
+        return min(angleFromButton, angleFromEdge)
+    }
+
     /// Ein einzelner Unterordner-Knoten, der beim Antippen von "Lernen"
     /// mindmap-artig aus der Button-Mitte herausfährt -- gescoped auf den im
-    /// Oberordner-Dropdown gewählten Ordner (`mindMapSubfolders`). Verteilung:
-    /// ein Bogen von 180° (links) über oben bis 0° (rechts) -- bei nur einem
-    /// Unterordner landet der Knoten mittig oberhalb des Buttons; bei
-    /// mehreren fächern sie sich darüber auf.
+    /// Oberordner-Dropdown gewählten Ordner (`mindMapSubfolders`). Verteilung
+    /// jetzt über `-maxAngleDegrees...+maxAngleDegrees` (statt fix ±90°, s.
+    /// `safeMaxAngleDegrees`) -- bei nur einem Unterordner landet der Knoten
+    /// weiterhin mittig oberhalb des Buttons.
     ///
-    /// `containerSize` (von `heroSection`s `GeometryReader` gemessen, NICHT
-    /// geraten) bestimmt den Radius: nie größer als die Hälfte der jeweiligen
-    /// Container-Dimension minus eines Sicherheitsabstands für die Pille
-    /// selbst (Breite/Höhe der Pille + Puffer) -- getrennt für Breite und
-    /// Höhe berechnet, weil eine Pille breiter als hoch ist. Dadurch bleibt
-    /// JEDE Pille bei JEDEM Winkel innerhalb der Section, unabhängig von
-    /// Bildschirmgröße/iOS-Version (Simons Vorgabe nach dem Positionierungs-
-    /// Bug: "abhängig von IOS-Version und Displaygröße").
-    private func subfolderMindMapNode(_ subfolder: Subfolder, index: Int, total: Int, containerSize: CGSize) -> some View {
-        let angleDegrees: Double = total <= 1 ? 0 : -90 + (180.0 / Double(total - 1)) * Double(index)
+    /// Radius bleibt fix bei `mindMapDesiredRadius`, da `safeMaxAngleDegrees`
+    /// die Spannweite schon so gewählt hat, dass eine normal breite Pille
+    /// dabei GARANTIERT weder den Button überlappt noch über den Rand
+    /// hinausragt. Als zusätzliches Sicherheitsnetz für UNGEWÖHNLICH lange
+    /// Unterordner-Namen (breiter als die angenommenen ~100pt): die für
+    /// GENAU diesen Winkel tatsächlich noch verfügbare Pillenbreite wird
+    /// separat berechnet und per `.frame(maxWidth:)` erzwungen -- eine
+    /// überlange Pille schrumpft dann per `.minimumScaleFactor` bzw.
+    /// kürzt den Text, statt den Button zu verdecken oder abzuschneiden.
+    private func subfolderMindMapNode(_ subfolder: Subfolder, index: Int, total: Int, containerSize: CGSize, maxAngleDegrees: Double) -> some View {
+        let angleDegrees: Double = total <= 1
+            ? 0
+            : -maxAngleDegrees + (2 * maxAngleDegrees / Double(total - 1)) * Double(index)
         let angleRadians = angleDegrees * .pi / 180
+        // Explizit auf CGFloat konvertiert (statt roher Double-Werte von
+        // sin/cos), damit die komplette Breiten-/Radius-Rechnung unten
+        // durchgängig in EINEM Zahlentyp bleibt.
+        let sinValue = CGFloat(abs(sin(angleRadians)))
+        let cosValue = CGFloat(abs(cos(angleRadians)))
 
-        // Geschätzte halbe Pillen-Ausdehnung als Sicherheitsabstand -- eine
-        // Pille kann bei langen Unterordner-Namen bis zu ~170pt breit werden,
-        // ist aber immer nur ~36pt hoch (Capsule, .footnote, Padding 10).
-        let maxRadiusFromWidth = containerSize.width / 2 - 85
-        let maxRadiusFromHeight = containerSize.height / 2 - 30
-        let radius = max(60, min(maxRadiusFromWidth, maxRadiusFromHeight))
+        let clearanceGap: CGFloat = 12
+        let edgeBuffer: CGFloat = 8
+        let radius = mindMapDesiredRadius
+
+        let availableFromButton: CGFloat = sinValue > 0.01
+            ? (radius - mindMapButtonRadius - clearanceGap - mindMapPillHalfHeight * cosValue) / sinValue
+            : .infinity
+        let availableFromEdge = containerSize.width / 2 - radius * sinValue - edgeBuffer
+        let pillWidth = max(60, min(availableFromButton, availableFromEdge, 180))
 
         let dx = showFolderMindMap ? radius * sin(angleRadians) : 0
         let dy = showFolderMindMap ? -radius * cos(angleRadians) : 0
@@ -268,7 +334,8 @@ struct FolderListView: View {
             Text(subfolder.name)
                 .font(.footnote.bold())
                 .lineLimit(1)
-                .minimumScaleFactor(0.7)
+                .minimumScaleFactor(0.6)
+                .frame(maxWidth: pillWidth - 28)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
                 .background(Capsule().fill(.thickMaterial))
