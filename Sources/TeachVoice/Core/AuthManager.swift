@@ -106,6 +106,66 @@ final class AuthManager: ObservableObject {
         await performAuthRequest(path: "token?grant_type=password", body: ["email": email, "password": password]) { _ in }
     }
 
+    /// Fängt den Rücksprung aus der Supabase-Bestätigungs-/Magic-Link-Mail ab
+    /// (siehe TeachVoiceApp `.onOpenURL`, project.yml `CFBundleURLTypes`) --
+    /// vorher landete dieser Link in einer Browser-Sackgasse
+    /// (`localhost:3000`, Supabase-Standard-"Site URL"), weil es keinen
+    /// Rücksprung-Mechanismus in die App gab. Simon: "Sag mir doch einfach,
+    /// wie ich das richtig aktivieren kann" -- das hier ist der "richtig"-Weg
+    /// (E-Mail-Bestätigung bleibt AN), statt sie nur auszuschalten.
+    ///
+    /// Supabase hängt die Session bei diesem Redirect als URL-FRAGMENT an
+    /// (`#access_token=...&refresh_token=...&expires_in=...`), nicht als
+    /// Query-String -- deshalb eigenes Fragment-Parsing statt
+    /// `URLComponents.queryItems`. Die Tokens selbst kommen NICHT mit den
+    /// User-Stammdaten (id/email) mit; die werden zusätzlich per
+    /// `GET /auth/v1/user` mit dem frischen Access-Token abgefragt (dasselbe
+    /// Muster wie die `delete-account`-Edge-Function serverseitig nutzt).
+    func handleAuthRedirect(url: URL) async {
+        guard let fragment = URLComponents(url: url, resolvingAgainstBaseURL: false)?.fragment else { return }
+        var params: [String: String] = [:]
+        for pair in fragment.split(separator: "&") {
+            let parts = pair.split(separator: "=", maxSplits: 1)
+            guard parts.count == 2, let value = String(parts[1]).removingPercentEncoding else { continue }
+            params[String(parts[0])] = value
+        }
+
+        guard let accessToken = params["access_token"],
+              let refreshToken = params["refresh_token"],
+              let expiresInString = params["expires_in"],
+              let expiresIn = TimeInterval(expiresInString) else {
+            errorMessage = params["error_description"]?.replacingOccurrences(of: "+", with: " ")
+                ?? "Bestätigungslink ungültig oder abgelaufen."
+            return
+        }
+
+        guard let user = await fetchUser(accessToken: accessToken) else {
+            errorMessage = "Bestätigung erhalten, aber Kontodaten konnten nicht geladen werden. Bitte manuell anmelden."
+            return
+        }
+
+        let newSession = AuthSession(
+            accessToken: accessToken,
+            refreshToken: refreshToken,
+            userId: user.id,
+            email: user.email ?? "",
+            expiresAt: Date().addingTimeInterval(expiresIn)
+        )
+        session = newSession
+        Keychain.set(newSession.refreshToken, for: KeychainKey.refreshToken)
+    }
+
+    private func fetchUser(accessToken: String) async -> SupabaseUser? {
+        var request = URLRequest(url: SupabaseConfig.authURL.appendingPathComponent("user"))
+        request.setValue(SupabaseConfig.anonKey, forHTTPHeaderField: "apikey")
+        request.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        guard let (data, response) = try? await URLSession.shared.data(for: request),
+              let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            return nil
+        }
+        return try? decoder.decode(SupabaseUser.self, from: data)
+    }
+
     func signOut() {
         Keychain.remove(KeychainKey.refreshToken)
         session = nil

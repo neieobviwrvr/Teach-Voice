@@ -27,6 +27,15 @@ targets:
           Teach (Voice) benötigt Mikrofonzugriff, um deine gesprochene Antwort
           auf eine Karteikartenfrage aufzunehmen und lokal zu transkribieren.
         ITSAppUsesNonExemptEncryption: false
+        # Eigenes URL-Schema, damit der Bestätigungs-/Magic-Link aus der
+        # Supabase-Auth-Mail die App direkt öffnet und einloggt, statt in
+        # einer Browser-Sackgasse zu landen (siehe AuthManager.handleAuthRedirect
+        # + TeachVoiceApp .onOpenURL). Muss als "Site URL" im Supabase-
+        # Dashboard exakt als "teachvoice://auth-callback" hinterlegt sein.
+        CFBundleURLTypes:
+          - CFBundleURLName: com.simonweinmann.teachvoice
+            CFBundleURLSchemes:
+              - teachvoice
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.simonweinmann.teachvoice

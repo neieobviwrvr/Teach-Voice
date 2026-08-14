@@ -40,6 +40,15 @@ struct TeachVoiceApp: App {
                 .environmentObject(library)
                 .environmentObject(transcriber)
                 .environmentObject(speech)
+                // Fängt den Rücksprung aus der Supabase-Bestätigungs-/Magic-
+                // Link-Mail ab (Custom-URL-Schema "teachvoice://", siehe
+                // project.yml CFBundleURLTypes + AuthManager.handleAuthRedirect)
+                // -- ohne das landete der Mail-Link bisher in einer
+                // Browser-Sackgasse (localhost:3000), ohne dass die App je
+                // etwas vom bestätigten Login mitbekam.
+                .onOpenURL { url in
+                    Task { await auth.handleAuthRedirect(url: url) }
+                }
         }
     }
 }
