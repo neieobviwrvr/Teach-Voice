@@ -143,7 +143,7 @@ Deno.serve(async (req: Request) => {
       kernelemente = await extractKontrollpunkte(body.question, body.answer);
     }
 
-    const result = await gradeAnswer(body.question, body.answer, kernelemente, body.sttText);
+    const result = await gradeAnswer(body.question, kernelemente, body.sttText);
 
     const response: GradeResponse = { kernelemente, result };
     return jsonResponse(response, 200);
@@ -232,18 +232,30 @@ Beispiel (Rückblick auf einen typischen Fehler): Frage "Wo liegen die Grenzen d
 FALSCH (überschneidend): ["ignoriert innere Prozesse", "lehnt Begriffe für Unsichtbares ab", "erklärt nicht, was im Inneren passiert", "wissenschaftlich unfruchtbar ..."]
 RICHTIG: ["blendet innere, nicht beobachtbare Vorgänge (Gedanken, Gefühle, inneres Lernen) aus", "wissenschaftlich unfruchtbar, weil andere Wissenschaften auch mit nicht beobachtbaren Begriffen arbeiten"]`;
 
+const EXTRAKTION_VORGEHEN = `
+
+Vorgehen (Pflicht, bevor du die Liste schreibst) -- im Feld "analyse":
+a) Was fragt die Frage eigentlich ab (z.B. "die Grenzen", "eine Definition", "drei Merkmale")?
+b) Welche Aussagen der Musterantwort beschreiben denselben Gedanken, umschreiben ihn oder folgen direkt aus ihm? Fasse sie zu Gruppen zusammen. Im Zweifel zusammenfassen.
+c) Jede Gruppe wird genau EIN Kontrollpunkt.
+Schreib die Analyse knapp (höchstens 4 Sätze).`;
+
 const EXTRAKTION_SCHEMA = {
   type: "object",
   additionalProperties: false,
   properties: {
+    // Steht bewusst VOR der Liste: das Modell muss erst gruppieren und
+    // schreibt dann die Punkte -- ohne diesen Zwischenschritt übernahm
+    // gpt-4o-mini im Test einfach jeden Satz als eigenen Punkt.
+    analyse: { type: "string" },
     kontrollpunkte: { type: "array", items: { type: "string" } },
   },
-  required: ["kontrollpunkte"],
+  required: ["analyse", "kontrollpunkte"],
 };
 
 async function extractKontrollpunkte(question: string, answer: string): Promise<string[]> {
   const user = `Frage: ${question}\n\nMusterantwort:\n${answer}`;
-  const parsed = (await callOpenAI(EXTRAKTION_SYSTEM, user, "kontrollpunkte", EXTRAKTION_SCHEMA)) as {
+  const parsed = (await callOpenAI(EXTRAKTION_SYSTEM + EXTRAKTION_VORGEHEN, user, "kontrollpunkte", EXTRAKTION_SCHEMA)) as {
     kontrollpunkte?: unknown;
   };
   const list = Array.isArray(parsed.kontrollpunkte) ? parsed.kontrollpunkte.map(String) : [];
@@ -262,15 +274,15 @@ ${SICHERHEITSHINWEIS}
 
 Prüfe JEDEN Kontrollpunkt einzeln und vergib genau einen Status:
 - "getroffen": Der Kerngedanke des Punkts ist sinngemäß erkennbar. Andere Worte, andere Reihenfolge, Umgangssprache statt Fachbegriff, fehlende Beispiele oder Nebendetails und eine knappe statt ausführliche Formulierung zählen trotzdem als getroffen.
-- "teilweise": Der Punkt wird erkennbar angesprochen, aber ein wesentlicher Teil fehlt oder bleibt zu vage (z.B. nur eine Hälfte einer zweiteiligen Aussage).
-- "fehlt": Der Gedanke kommt nicht vor, oder die Antwort sagt dazu etwas inhaltlich Falsches.
+- "teilweise": Was zum Punkt gesagt wird, STIMMT, ist aber unvollständig oder zu vage (z.B. nur eine Hälfte einer zweiteiligen Aussage).
+- "fehlt": Der Gedanke kommt nicht vor -- ODER die Antwort sagt zu diesem Thema etwas Falsches oder das Gegenteil. Gleiche Stichwörter allein zählen nicht: "Gefühle" in einem falschen Zusammenhang erfüllt keinen Punkt über Gefühle.
 
 Wichtige Regeln:
 1. EINE Aussage der Antwort kann MEHRERE Kontrollpunkte erfüllen. Dann ist jeder dieser Punkte "getroffen" -- ordne eine Aussage nie künstlich nur einem Punkt zu.
 2. Zusätzliche, nicht verlangte Inhalte werden nicht bestraft, solange sie keinem Punkt widersprechen.
 3. Spracherkennungsfehler: Ergibt ein Wort keinen Sinn, klingt aber wie ein erwarteter Fachbegriff (z.B. "Lernenghebung" statt "Lernumgebung"), gehe davon aus, dass der richtige Begriff gesagt wurde. Füllwörter, Abbrüche und Satzbau spielen keine Rolle.
 4. Im echten Grenzfall entscheide zugunsten der/des Studierenden.
-5. "beleg": ein kurzes wörtliches Zitat (höchstens 12 Wörter) aus der gesprochenen Antwort, das den Punkt abdeckt. Bei "fehlt" ein leerer String. Gib "getroffen" oder "teilweise" nur, wenn du einen Beleg zitieren kannst.
+5. "beleg": ein kurzes wörtliches Zitat (höchstens 12 Wörter) AUS DER GESPROCHENEN ANTWORT (nie aus den Kontrollpunkten), das den Punkt inhaltlich richtig abdeckt. Bei "fehlt" ein leerer String. Gib "getroffen" oder "teilweise" nur, wenn du so einen Beleg zitieren kannst.
 
 Danach "kurzloesung": die richtige Antwort zum VORLESEN, direkt nach der Antwort der/des Studierenden. Sie nennt AUSSCHLIESSLICH die Punkte mit Status "fehlt" oder "teilweise" -- wiederhole nichts, was schon getroffen wurde. Höchstens 2 kurze Sätze, insgesamt höchstens 30 Wörter, so formuliert, wie man es laut sagt: keine Aufzählungszeichen, keine Klammern, keine Abkürzungen, kein Markdown, die Person nicht ansprechen. Beginne direkt mit dem Inhalt (z.B. "Außerdem gilt er als wissenschaftlich unfruchtbar, weil ..."). Sind alle Punkte getroffen, gib einen leeren String zurück.`;
 
@@ -296,16 +308,12 @@ const BEWERTUNG_SCHEMA = {
   required: ["punkte", "kurzloesung"],
 };
 
-async function gradeAnswer(
-  question: string,
-  answer: string,
-  kontrollpunkte: string[],
-  sttText: string
-): Promise<GradingResult> {
+/// Die Musterantwort geht bewusst NICHT mit in die Bewertung: im Test
+/// zitierte das Modell sonst Belege aus ihr statt aus der gesprochenen
+/// Antwort. Die Kontrollpunkte sind so formuliert, dass sie für sich
+/// verständlich sind.
+async function gradeAnswer(question: string, kontrollpunkte: string[], sttText: string): Promise<GradingResult> {
   const user = `Frage: ${question}
-
-Musterantwort (nur als Kontext, bewertet wird ausschließlich gegen die Kontrollpunkte):
-${answer}
 
 Kontrollpunkte:
 ${kontrollpunkte.map((p, i) => `${i + 1}. ${p}`).join("\n")}
@@ -327,7 +335,10 @@ ${sttText}`;
     const status = entry.status;
     if (!Number.isInteger(index) || index < 0 || index >= kontrollpunkte.length || statusByIndex.has(index)) continue;
     if (status !== "getroffen" && status !== "teilweise" && status !== "fehlt") continue;
-    statusByIndex.set(index, { status, beleg: typeof entry.beleg === "string" ? entry.beleg.trim() : "" });
+    // Bei "fehlt" gibt es per Definition keinen Beleg (das Modell zitierte im
+    // Test dort manchmal den Kontrollpunkt selbst).
+    const beleg = status !== "fehlt" && typeof entry.beleg === "string" ? entry.beleg.trim() : "";
+    statusByIndex.set(index, { status, beleg });
   }
 
   const punkte: PunktErgebnis[] = kontrollpunkte.map((text, index) => {
