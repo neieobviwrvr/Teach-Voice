@@ -19,7 +19,6 @@ struct FolderListView: View {
     @State private var renamingFolder: Folder?
     @State private var renameText = ""
     @State private var showMicPermissionNotice = false
-    @State private var isLoadingHandsFree = false
     @State private var showProfile = false
     // Neuer zentraler "Lernen"-Button (Simons Vorgabe): Ordner "fallen" per
     // Animation mindmap-artig heraus, statt direkt als Liste sichtbar zu
@@ -35,49 +34,23 @@ struct FolderListView: View {
     @State private var heroMeasuredWidth: CGFloat = 375
     // Ersetzt den statischen "Meine Ordner"-Titel: ein Dropdown oben links
     // wählt den "Oberordner" (= `Folder`), dessen UNTERORDNER dann im
-    // "Lernen"-Mindmap herausfahren (Simons Vorgabe). `maxFoldersPerUser`
-    // (aktuell 2, extra zum Testen dieses Dropdowns gelockert) begrenzt die
-    // Auswahl noch, das Dropdown ist aber bewusst allgemein für mehr gebaut.
+    // "Lernen"-Mindmap herausfahren (Simons Vorgabe).
     @State private var selectedFolder: Folder?
-    // Simon: "füge unter den Buttons für Voice-Only und Eigenbewertung einen
-    // Button an für extra Ordner und die generelle Ordnerverwaltung" -- jetzt
-    // wo `maxFoldersPerUser` auf 2 gelockert ist (s.u.), lohnt sich ein
-    // eigener schneller Einstieg dafür statt nur die "Alle Ordner"-Section
+    // Eigener schneller Einstieg für weitere Ordner und die generelle
+    // Ordnerverwaltung (Simons Vorgabe), statt nur die "Alle Ordner"-Section
     // ganz unten in der Liste.
     @State private var showFolderManagement = false
 
-    // "Hands-free (Voice only)": Unterordner-Auswahl passiert per Sprachmenü
-    // INNERHALB der View – hier wird nur die Unterordner-Liste vorgeladen und
-    // die Bewertungs-Strenge abgefragt.
-    @State private var voiceOnlySubfolders: [Subfolder]?
-    @State private var voiceOnlyStrictness: GradingStrictness = .normal
-    @State private var pendingVoiceOnlySubfolders: [Subfolder] = []
-    @State private var showVoiceOnlyStrictnessPicker = false
-
-    // "Hands-free lernen (Eigenbewertung)": sichtbares Pop-up zur Auswahl,
-    // da man dort ohnehin pro Frage antippen muss.
-    @State private var eigenbewertungCards: [Flashcard]?
-    @State private var eigenbewertungTitle = "Hands-free"
-    @State private var eigenbewertungStrictness: GradingStrictness = .normal
-    @State private var showEigenbewertungSubfolderPicker = false
-    @State private var eigenbewertungSubfolderOptions: [Subfolder] = []
-    @State private var pendingEigenbewertungCards: [Flashcard] = []
-    @State private var pendingEigenbewertungTitle = ""
-    @State private var showEigenbewertungStrictnessPicker = false
-
-    private var isFull: Bool { library.folders.count >= maxFoldersPerUser }
-
-    /// Vorberechnet statt inline in den ConfirmationDialogs – Swifts
-    /// Type-Checker kommt bei String-Verkettung direkt in einem ViewBuilder-
-    /// Closure sonst leicht an seine Grenzen (siehe unten, `body` musste aus
-    /// demselben Grund in mehrere Teilausdrücke aufgesplittet werden).
-    private var strictnessExplanation: String {
-        GradingStrictness.normal.description + "\n" + GradingStrictness.tryhard.description
-    }
+    // Lernen: Tap auf eine Mindmap-Pille wählt den Bereich (`studyScope`),
+    // der Modus-Dialog (`studyModeDialog`) startet daraus die Session
+    // (`studyRequest`, Navigationsziel `StudySessionView`).
+    @State private var studyScope: StudyScope?
+    @State private var studyRequest: StudySessionRequest?
+    @State private var isPreparingStudy = false
 
     var body: some View {
         NavigationStack {
-            withFolderSelection(withHandsFreeDialogs(withCoreAlerts(navigationList)))
+            withFolderSelection(withStudyDialog(withCoreAlerts(navigationList)))
         }
     }
 
@@ -95,11 +68,8 @@ struct FolderListView: View {
             .navigationDestination(for: Folder.self) { folder in
                 SubfolderListView(folder: folder)
             }
-            .navigationDestination(item: $voiceOnlySubfolders) { subfolders in
-                HandsFreeStudyView(subfolders: subfolders, strictness: voiceOnlyStrictness)
-            }
-            .navigationDestination(item: $eigenbewertungCards) { cards in
-                HandsFreeSelfAssessmentStudyView(cards: cards, title: eigenbewertungTitle, strictness: eigenbewertungStrictness)
+            .navigationDestination(item: $studyRequest) { request in
+                StudySessionView(request: request)
             }
             // Kein statischer Titel mehr -- das Oberordner-Dropdown in
             // `mainToolbar` übernimmt diese Rolle (Simons Vorgabe: "statt
@@ -123,7 +93,7 @@ struct FolderListView: View {
     }
 
     /// Ausgelagert (statt weiterer Modifier in `navigationList`), gleicher
-    /// Grund wie bei `withCoreAlerts`/`withHandsFreeDialogs`: der
+    /// Grund wie bei `withCoreAlerts`/`withStudyDialog`: der
     /// Type-Checker ist in dieser View schon einmal an einer zu langen
     /// verketteten Modifier-Kette gescheitert.
     @ViewBuilder
@@ -147,9 +117,9 @@ struct FolderListView: View {
             }
             // Was Claude über den KI-Konnektor angelegt hat, beim Zurück-
             // wechseln in die App sofort zeigen. Nicht während einer
-            // Hands-free-Session, die ihre Auswahl beim Start mitbekommt.
+            // Lern-Session, die ihre Karten beim Start mitbekommt.
             .onChange(of: scenePhase) { _, phase in
-                guard phase == .active, voiceOnlySubfolders == nil, eigenbewertungCards == nil else { return }
+                guard phase == .active, studyRequest == nil else { return }
                 Task { await reloadAfterReturningToApp() }
             }
     }
@@ -184,14 +154,42 @@ struct FolderListView: View {
 
     // MARK: - Hero: zentraler "Lernen"-Button mit Mindmap-Reveal
 
+    /// Eine Pille im Mindmap: entweder ein einzelner Unterordner oder (ab 2
+    /// Unterordnern) "Ganzer Ordner" für alle Unterordner zusammen.
+    private enum MindMapItem: Identifiable {
+        case ganzerOrdner(Folder)
+        case unterordner(Subfolder)
+
+        var id: UUID {
+            switch self {
+            case .ganzerOrdner(let folder): return folder.id
+            case .unterordner(let subfolder): return subfolder.id
+            }
+        }
+
+        var name: String {
+            switch self {
+            case .ganzerOrdner: return "Ganzer Ordner"
+            case .unterordner(let subfolder): return subfolder.name
+            }
+        }
+
+        var isGanzerOrdner: Bool {
+            if case .ganzerOrdner = self { return true }
+            return false
+        }
+    }
+
     /// Die Unterordner des aktuell im Oberordner-Dropdown gewählten Ordners
-    /// -- das ist jetzt die Grundlage für den Mindmap-Reveal (statt vorher
-    /// die Ordner selbst), siehe Simons Vorgabe: "in der Animation beim
-    /// 'Lernen'-Button nur die Unterordner herausgefahren, die in dem
-    /// entsprechenden ausgewählten Oberordner [...] gehören".
-    private var mindMapSubfolders: [Subfolder] {
+    /// -- Grundlage für den Mindmap-Reveal, siehe Simons Vorgabe: "in der
+    /// Animation beim 'Lernen'-Button nur die Unterordner herausgefahren, die
+    /// in dem entsprechenden ausgewählten Oberordner [...] gehören". Bei
+    /// mehreren Unterordnern kommt vorne "Ganzer Ordner" dazu.
+    private var mindMapItems: [MindMapItem] {
         guard let selectedFolder else { return [] }
-        return library.subfolders(in: selectedFolder)
+        let subfolders = library.subfolders(in: selectedFolder)
+        let unterordner = subfolders.map { MindMapItem.unterordner($0) }
+        return subfolders.count > 1 ? [.ganzerOrdner(selectedFolder)] + unterordner : unterordner
     }
 
     /// Nimmt bewusst viel vertikalen Platz ein (füllt den sichtbaren Bereich
@@ -218,15 +216,16 @@ struct FolderListView: View {
     /// dieselbe wie bei der Radial-Variante.
     @ViewBuilder
     private var heroSection: some View {
-        let rowCount = mindMapRowCount(count: mindMapSubfolders.count, containerWidth: heroMeasuredWidth)
-        let slots = mindMapSlots(count: mindMapSubfolders.count, containerWidth: heroMeasuredWidth)
+        let items = mindMapItems
+        let rowCount = mindMapRowCount(count: items.count, containerWidth: heroMeasuredWidth)
+        let slots = mindMapSlots(count: items.count, containerWidth: heroMeasuredWidth)
         let shift = mindMapButtonShift(rowCount: rowCount)
         Section {
             GeometryReader { geo in
                 ZStack {
-                    ForEach(Array(mindMapSubfolders.enumerated()), id: \.element.id) { index, subfolder in
+                    ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         if index < slots.count {
-                            subfolderMindMapNode(subfolder, index: index, slot: slots[index], buttonShift: shift)
+                            mindMapNode(item, index: index, slot: slots[index], buttonShift: shift)
                         }
                     }
                     learnButton
@@ -254,16 +253,21 @@ struct FolderListView: View {
                 showFolderMindMap.toggle()
             }
         } label: {
-            Text("Lernen")
-                .font(.title3.bold())
-                .foregroundStyle(.white)
-                .frame(width: 130, height: 130)
-                .background(Circle().fill(Color.accentColor))
-                .shadow(radius: showFolderMindMap ? 12 : 4)
+            Group {
+                if isPreparingStudy {
+                    ProgressView().tint(.white)
+                } else {
+                    Text("Lernen").font(.title3.bold())
+                }
+            }
+            .foregroundStyle(.white)
+            .frame(width: 130, height: 130)
+            .background(Circle().fill(Color.accentColor))
+            .shadow(radius: showFolderMindMap ? 12 : 4)
         }
         .buttonStyle(.plain)
-        .disabled(mindMapSubfolders.isEmpty)
-        .opacity(mindMapSubfolders.isEmpty ? 0.5 : 1)
+        .disabled(mindMapItems.isEmpty || isPreparingStudy)
+        .opacity(mindMapItems.isEmpty ? 0.5 : 1)
     }
 
     /// Eine berechnete Zielposition + Breiten-Budget für genau eine Pille im
@@ -381,27 +385,16 @@ struct FolderListView: View {
         max(340, mindMapTopExtent(rowCount: rowCount) + MindMapGeometry.buttonBottomExtent)
     }
 
-    /// Eine einzelne Unterordner-Pille, die beim Antippen von "Lernen" per
+    /// Eine einzelne Pille, die beim Antippen von "Lernen" per
     /// Spring-Animation aus der Button-Mitte an ihre berechnete Slot-Position
     /// fährt (gestaffelt über `index`) -- gescoped auf den im
-    /// Oberordner-Dropdown gewählten Ordner (`mindMapSubfolders`).
-    private func subfolderMindMapNode(_ subfolder: Subfolder, index: Int, slot: MindMapSlot, buttonShift: CGFloat) -> some View {
+    /// Oberordner-Dropdown gewählten Ordner (`mindMapItems`). Ein Tap lädt
+    /// die Karten frisch und fragt dann den Lernmodus ab (Sprechen/Tippen).
+    private func mindMapNode(_ item: MindMapItem, index: Int, slot: MindMapSlot, buttonShift: CGFloat) -> some View {
         Button {
-            // Springt DIREKT in Hands-free (Voice only) für GENAU diesen
-            // Unterordner (Simon: "will ich direkt ins 'Handsfree Voice
-            // only' geschickt werden, allerdings ohne die Abfrage welcher
-            // Ordner gelernt werden soll") -- reicht dafür bewusst dieselbe
-            // Strictness-Auswahl (`showVoiceOnlyStrictnessPicker`) und
-            // denselben Navigations-Mechanismus (`voiceOnlySubfolders`) wie
-            // der "Voice only"-Button in `handsFreeSection`, nur mit genau
-            // einem vorausgewählten Unterordner statt allen.
-            // `HandsFreeStudyView` überspringt die Sprach-Nachfrage
-            // automatisch, sobald ihr nur ein einziger Unterordner übergeben
-            // wird (siehe `selectSubfolderViaVoice`).
-            pendingVoiceOnlySubfolders = [subfolder]
-            showVoiceOnlyStrictnessPicker = true
+            Task { await prepareStudy(for: item) }
         } label: {
-            Text(subfolder.name)
+            Text(item.name)
                 .font(.footnote.bold())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
@@ -411,10 +404,11 @@ struct FolderListView: View {
                 .frame(maxWidth: slot.width - 28)
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(Capsule().fill(.thickMaterial))
-                .overlay(Capsule().stroke(Color.accentColor.opacity(0.4), lineWidth: 1))
+                .background(Capsule().fill(item.isGanzerOrdner ? AnyShapeStyle(Color.accentColor.opacity(0.18)) : AnyShapeStyle(.thickMaterial)))
+                .overlay(Capsule().stroke(Color.accentColor.opacity(item.isGanzerOrdner ? 0.8 : 0.4), lineWidth: 1))
         }
         .buttonStyle(.plain)
+        .disabled(isPreparingStudy)
         // Eingeklappt sitzt die Pille auf der (verschobenen) Button-Mitte,
         // ausgeklappt auf ihrem Slot -- dieselbe "fährt aus dem Button
         // heraus"-Optik wie bei der Radial-Variante.
@@ -430,18 +424,11 @@ struct FolderListView: View {
         )
     }
 
-    // MARK: - Hands-free (kompakt, siehe Simons Vorgabe: verkleinert)
+    // MARK: - Ordnerverwaltung (kompakt, siehe Simons Vorgabe: verkleinert)
 
-    /// Simon: "entferne auf dem Homescreen die beiden Buttons 'Voice only'
-    /// und 'Eigenbewertung'" -- "Voice only" bleibt als FUNKTION weiterhin
-    /// erreichbar (über den Mindmap-Pillen-Tap, der denselben
-    /// Strictness-Picker + `voiceOnlySubfolders`-Navigationsmechanismus
-    /// nutzt, siehe `subfolderMindMapNode`), nur der eigene Homescreen-Button
-    /// dafür fällt weg. "Eigenbewertung" hat dadurch aktuell KEINEN
-    /// Einstiegspunkt mehr in der UI -- die zugehörige Logik
-    /// (`startEigenbewertungFlow`, `HandsFreeSelfAssessmentStudyView` etc.)
-    /// bleibt bewusst unangetastet im Code liegen statt gelöscht zu werden,
-    /// falls sie später wieder verdrahtet werden soll.
+    /// Gelernt wird ausschließlich über den "Lernen"-Button und seine
+    /// Mindmap-Pillen (siehe `mindMapNode`) -- hier bleibt nur der kleine
+    /// Einstieg in die Ordnerverwaltung.
     @ViewBuilder
     private var handsFreeSection: some View {
         Section {
@@ -491,34 +478,9 @@ struct FolderListView: View {
                     } label: {
                         Label("Ordner hinzufügen", systemImage: "plus")
                     }
-                    .disabled(isFull)
                 }
             }
         }
-    }
-
-    /// Einheitlicher Ladezustand mit echtem Spinner statt reinem Text-Swap
-    /// ("Lädt…") – konsistent mit dem Rest der App (PDFImportView, StudyView).
-    /// Bewusst klein/kompakt (Simons Vorgabe) -- kleine Schrift, wenig
-    /// Padding, nebeneinander statt volle Zeilenbreite wie vorher.
-    private func compactHandsFreeButton(title: String, systemImage: String, action: @escaping () async -> Void) -> some View {
-        Button {
-            Task { await action() }
-        } label: {
-            VStack(spacing: 2) {
-                if isLoadingHandsFree {
-                    ProgressView()
-                } else {
-                    Image(systemName: systemImage)
-                }
-                Text(title).font(.caption2)
-            }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 6)
-        }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .disabled(isLoadingHandsFree)
     }
 
     @ViewBuilder
@@ -565,12 +527,11 @@ struct FolderListView: View {
             } label: {
                 Label("Ordner hinzufügen", systemImage: "plus")
             }
-            .disabled(isFull)
         }
         // Ersetzt den früheren statischen Titel "Meine Ordner" (Simons
         // Vorgabe). Zeigt den Namen des gewählten Oberordners + Chevron;
         // Auswahl bestimmt, welche Unterordner im "Lernen"-Mindmap
-        // herausfahren (siehe `mindMapSubfolders`). Zuerst deklariert, damit
+        // herausfahren (siehe `mindMapItems`). Zuerst deklariert, damit
         // es als das linkeste Element erscheint.
         ToolbarItem(placement: .topBarLeading) {
             Menu {
@@ -614,29 +575,14 @@ struct FolderListView: View {
         }
     }
 
-    @ViewBuilder
     private var addFolderBottomButton: some View {
-        // Ohne die Caption ist für den User nicht erkennbar, WARUM der Button
-        // ausgegraut ist, sobald das Hard-Limit (`maxFoldersPerUser`) schon
-        // erreicht ist – wird nur bei isFull eingeblendet, um den Normalfall
-        // nicht unnötig vollzutexten.
-        VStack(spacing: 4) {
-            Button {
-                showAddFolder = true
-            } label: {
-                Label("Ordner hinzufügen", systemImage: "folder.badge.plus")
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(isFull)
-
-            if isFull {
-                Text("Maximal \(maxFoldersPerUser) Ordner pro Account – lege stattdessen beliebig viele Unterordner darin an.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
+        Button {
+            showAddFolder = true
+        } label: {
+            Label("Ordner hinzufügen", systemImage: "folder.badge.plus")
+                .frame(maxWidth: .infinity)
         }
+        .buttonStyle(.borderedProminent)
         .padding()
     }
 
@@ -697,115 +643,39 @@ struct FolderListView: View {
     }
 
     @ViewBuilder
-    private func withHandsFreeDialogs<Content: View>(_ content: Content) -> some View {
+    private func withStudyDialog<Content: View>(_ content: Content) -> some View {
         content
-            .confirmationDialog(
-                "Wie streng bewerten?",
-                isPresented: $showVoiceOnlyStrictnessPicker,
-                titleVisibility: .visible
-            ) {
-                ForEach(GradingStrictness.allCases) { strictness in
-                    Button(strictness.label) {
-                        voiceOnlyStrictness = strictness
-                        voiceOnlySubfolders = pendingVoiceOnlySubfolders
-                    }
-                }
-                Button("Abbrechen", role: .cancel) {}
-            } message: {
-                Text(strictnessExplanation)
-            }
-            .confirmationDialog(
-                "Unterordner für Hands-free wählen",
-                isPresented: $showEigenbewertungSubfolderPicker,
-                titleVisibility: .visible
-            ) {
-                eigenbewertungSubfolderPickerButtons
-            }
-            .confirmationDialog(
-                "Wie streng bewerten?",
-                isPresented: $showEigenbewertungStrictnessPicker,
-                titleVisibility: .visible
-            ) {
-                ForEach(GradingStrictness.allCases) { strictness in
-                    Button(strictness.label) {
-                        eigenbewertungTitle = pendingEigenbewertungTitle
-                        eigenbewertungStrictness = strictness
-                        eigenbewertungCards = pendingEigenbewertungCards
-                    }
-                }
-                Button("Abbrechen", role: .cancel) {}
-            } message: {
-                Text(strictnessExplanation)
+            .studyModeDialog(scope: $studyScope) { request in
+                showFolderMindMap = false
+                studyRequest = request
             }
     }
 
-    @ViewBuilder
-    private var eigenbewertungSubfolderPickerButtons: some View {
-        if eigenbewertungSubfolderOptions.count > 1 {
-            let totalCards = eigenbewertungSubfolderOptions.reduce(0) { $0 + library.flashcards(in: $1).count }
-            Button("Alle Unterordner lernen (\(eigenbewertungSubfolderOptions.count) Unterordner, \(totalCards) Karten)") {
-                Task { await prepareEigenbewertung(subfolders: eigenbewertungSubfolderOptions, title: "Alle Unterordner") }
-            }
-        }
-        ForEach(eigenbewertungSubfolderOptions) { subfolder in
-            Button("\(subfolder.name) (\(library.flashcards(in: subfolder).count) Karten)") {
-                Task { await prepareEigenbewertung(subfolders: [subfolder], title: subfolder.name) }
-            }
-        }
-        Button("Abbrechen", role: .cancel) {}
-    }
+    // MARK: - Lernen
 
-    // MARK: - Hands-free (Voice only)
+    /// Lädt die Karten des gewählten Bereichs frisch (damit gerade über
+    /// Claude angelegte Karten dabei sind) und öffnet den Modus-Dialog.
+    private func prepareStudy(for item: MindMapItem) async {
+        isPreparingStudy = true
+        defer { isPreparingStudy = false }
 
-    private func startVoiceOnlyFlow() async {
-        isLoadingHandsFree = true
-        let options = await loadAllSubfolders()
-        isLoadingHandsFree = false
-        guard !options.isEmpty else {
-            library.errorMessage = "Keine Unterordner vorhanden – lege zuerst einen an."
-            return
-        }
-        pendingVoiceOnlySubfolders = options
-        showVoiceOnlyStrictnessPicker = true
-    }
-
-    // MARK: - Hands-free lernen (Eigenbewertung)
-
-    private func startEigenbewertungFlow() async {
-        isLoadingHandsFree = true
-        let options = await loadAllSubfolders()
-        for subfolder in options where library.flashcards(in: subfolder).isEmpty {
+        let title: String
+        let cards: [Flashcard]
+        switch item {
+        case .ganzerOrdner(let folder):
+            await library.loadAllFlashcards(for: folder, force: true)
+            title = folder.name
+            cards = library.allFlashcards(in: folder)
+        case .unterordner(let subfolder):
             await library.loadFlashcards(for: subfolder)
+            title = subfolder.name
+            cards = library.flashcards(in: subfolder)
         }
-        isLoadingHandsFree = false
-        guard !options.isEmpty else {
-            library.errorMessage = "Keine Unterordner vorhanden – lege zuerst einen an."
-            return
-        }
-        eigenbewertungSubfolderOptions = options
-        showEigenbewertungSubfolderPicker = true
-    }
 
-    private func prepareEigenbewertung(subfolders: [Subfolder], title: String) async {
-        let cards = subfolders.flatMap { library.flashcards(in: $0) }
         guard !cards.isEmpty else {
-            library.errorMessage = "Keine Karteikarten vorhanden."
+            library.errorMessage = "\"\(title)\" hat noch keine Karteikarten. Lege welche an oder lass sie dir von Claude erstellen."
             return
         }
-        pendingEigenbewertungTitle = title
-        pendingEigenbewertungCards = cards
-        showEigenbewertungStrictnessPicker = true
-    }
-
-    // MARK: - Gemeinsam
-
-    private func loadAllSubfolders() async -> [Subfolder] {
-        if library.folders.isEmpty { await library.loadFolders() }
-        var options: [Subfolder] = []
-        for folder in library.folders {
-            if library.subfolders(in: folder).isEmpty { await library.loadSubfolders(for: folder) }
-            options.append(contentsOf: library.subfolders(in: folder))
-        }
-        return options
+        studyScope = StudyScope(title: title, cards: cards)
     }
 }

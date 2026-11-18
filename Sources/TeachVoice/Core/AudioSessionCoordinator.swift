@@ -7,8 +7,8 @@ import AVFoundation
 /// (.playback/.spokenAudio bzw. .playAndRecord/.measurement) -- die sich
 /// gegenseitig überschrieben, sobald TTS und Aufnahme sich zeitlich
 /// überlappen sollten (Barge-in im Hands-free-Modus: das Mikrofon soll schon
-/// WÄHREND einer laufenden Ansage zuhören können, siehe
-/// `HandsFreeStudyView.listenWhileSpeakingAndArbitrate`). Beide rufen jetzt
+/// WÄHREND einer laufenden Ansage zuhören können -- inzwischen aufgegeben,
+/// siehe unten). Beide rufen jetzt
 /// dieselbe Konfiguration auf, bevor sie loslegen:
 ///
 /// - `.playAndRecord`: die einzige Kategorie, die gleichzeitiges Abspielen
@@ -50,7 +50,7 @@ import AVFoundation
 /// Autos) genauso wenig zuverlässig von einer echten Stimme unterscheiden
 /// ließ wie zuvor die eigene Stimme der App. Simons Entscheidung: Ansage läuft
 /// jetzt IMMER komplett durch, danach ein Signalton (`SoundEffectPlayer`),
-/// erst DANACH beginnt die Aufnahme -- siehe `HandsFreeStudyView`. `.playAndRecord`
+/// erst DANACH beginnt die Aufnahme -- siehe `VoiceStudyView`. `.playAndRecord`
 /// bleibt trotzdem als Kategorie bestehen (kein Zurückwechseln zu `.playback`
 /// zwischen Ansage und Aufnahme nötig, vermeidet die oben beschriebenen
 /// Umschalt-Klicks), auch wenn die gleichzeitige Nutzung nicht mehr gebraucht wird.

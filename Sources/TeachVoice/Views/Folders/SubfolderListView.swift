@@ -11,9 +11,31 @@ struct SubfolderListView: View {
     @State private var renamingSubfolder: Subfolder?
     @State private var renameText = ""
     @State private var showPDFImport = false
+    @State private var studyScope: StudyScope?
+    @State private var studyRequest: StudySessionRequest?
+    @State private var isPreparingStudy = false
 
     var body: some View {
         List {
+            if library.subfolders(in: folder).count > 1 {
+                Section {
+                    Button {
+                        Task { await startWholeFolder() }
+                    } label: {
+                        HStack {
+                            Label("Ganzen Ordner lernen", systemImage: "graduationcap")
+                            if isPreparingStudy {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(isPreparingStudy)
+                } footer: {
+                    Text("Fragt die Karten aller Unterordner zusammen ab.")
+                }
+            }
+
             // Bewusst zentriert statt oben rechts im Toolbar (Simons
             // Entscheidung) – der Haupt-Einstiegspunkt für neue Unterordner,
             // sowohl manuell als auch per PDF-Import, der jetzt hier statt in
@@ -62,7 +84,7 @@ struct SubfolderListView: View {
                 NavigationLink(value: subfolder) {
                     VStack(alignment: .leading) {
                         Label(subfolder.name, systemImage: "folder")
-                        Text("\(library.flashcards(in: subfolder).count)/\(maxFlashcardsPerSubfolder) Karten")
+                        Text("\(library.flashcards(in: subfolder).count) Karten")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -99,14 +121,22 @@ struct SubfolderListView: View {
         .navigationDestination(for: Subfolder.self) { subfolder in
             FlashcardListView(subfolder: subfolder)
         }
+        .navigationDestination(item: $studyRequest) { request in
+            StudySessionView(request: request)
+        }
+        .studyModeDialog(scope: $studyScope) { request in
+            studyRequest = request
+        }
         .navigationTitle(folder.name)
-        .task { await library.loadSubfolders(for: folder) }
-        .refreshable { await library.loadSubfolders(for: folder) }
-        // Unterordner, die Claude über den KI-Konnektor angelegt hat, sofort
-        // zeigen, wenn man in die App zurückwechselt.
+        // Lädt auch die Karten aller Unterordner, damit die Kartenzahlen
+        // stimmen und "Ganzen Ordner lernen" alles kennt.
+        .task { await library.loadAllFlashcards(for: folder, force: true) }
+        .refreshable { await library.loadAllFlashcards(for: folder, force: true) }
+        // Was Claude über den KI-Konnektor angelegt hat, sofort zeigen, wenn
+        // man in die App zurückwechselt. Nicht während einer Lern-Session.
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active else { return }
-            Task { await library.loadSubfolders(for: folder) }
+            guard phase == .active, studyRequest == nil else { return }
+            Task { await library.loadAllFlashcards(for: folder, force: true) }
         }
         .alert("Neuer Unterordner", isPresented: $showAddSubfolder) {
             TextField("Name", text: $newSubfolderName)
@@ -137,5 +167,17 @@ struct SubfolderListView: View {
         .sheet(isPresented: $showPDFImport) {
             PDFImportView(folder: folder)
         }
+    }
+
+    private func startWholeFolder() async {
+        isPreparingStudy = true
+        await library.loadAllFlashcards(for: folder, force: true)
+        isPreparingStudy = false
+        let cards = library.allFlashcards(in: folder)
+        guard !cards.isEmpty else {
+            library.errorMessage = "In \"\(folder.name)\" gibt es noch keine Karteikarten."
+            return
+        }
+        studyScope = StudyScope(title: folder.name, cards: cards)
     }
 }

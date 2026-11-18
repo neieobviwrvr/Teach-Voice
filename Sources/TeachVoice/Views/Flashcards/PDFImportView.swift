@@ -33,7 +33,6 @@ struct PDFImportView: View {
     @State private var candidates: [ReviewCandidate] = []
     @State private var isSaving = false
     @State private var errorMessage: String?
-    @State private var isLoadingCapacity = true
     /// Wird beim ersten Speichern-Tap gesetzt und danach wiederverwendet –
     /// ein erneuter Tap nach einem Teil-Fehlschlag legt keinen zweiten,
     /// leeren Unterordner an.
@@ -51,14 +50,6 @@ struct PDFImportView: View {
         var isSelected = true
     }
 
-    /// Wie viele Karten im GESAMTEN Ordner (über alle Unterordner) noch frei
-    /// sind – die eigentliche Bremse, seit Unterordner selbst unbegrenzt sind.
-    private var remainingFolderCapacity: Int {
-        max(0, maxFlashcardsPerFolder - library.totalFlashcardCount(in: folder))
-    }
-    /// Für einen neuen, leeren Unterordner ist die effektiv nutzbare Grenze
-    /// das Minimum aus Pro-Unterordner-Limit und Ordner-Restkapazität.
-    private var remainingCapacity: Int { min(maxFlashcardsPerSubfolder, remainingFolderCapacity) }
     private var selectedCount: Int { candidates.filter(\.isSelected).count }
 
     var body: some View {
@@ -70,11 +61,7 @@ struct PDFImportView: View {
                         .foregroundStyle(.red)
                         .padding()
                 }
-                if isLoadingCapacity {
-                    ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    currentPhase
-                }
+                currentPhase
             }
             .navigationTitle("Unterordner aus PDF erstellen")
             .navigationBarTitleDisplayMode(.inline)
@@ -83,12 +70,6 @@ struct PDFImportView: View {
                     Button("Abbrechen") { dismiss() }
                 }
             }
-        }
-        // Lädt Karten für ALLE Unterordner nach (nicht nur besuchte), damit
-        // die Ordner-Restkapazität von Anfang an korrekt angezeigt wird.
-        .task {
-            await library.loadAllFlashcards(for: folder)
-            isLoadingCapacity = false
         }
         .fileImporter(
             isPresented: $showFilePicker,
@@ -123,14 +104,13 @@ struct PDFImportView: View {
             Text("Bis zu \(maxPDFCount) PDFs auswählen (je max. 50MB)")
                 .font(.headline)
                 .multilineTextAlignment(.center)
-            Text("Nur Text wird ausgelesen – Diagramme/Bilder werden aktuell noch nicht berücksichtigt. In \"\(folder.name)\" sind insgesamt noch \(remainingFolderCapacity) von \(maxFlashcardsPerFolder) Karten-Plätzen frei (über alle Unterordner zusammen).")
+            Text("Nur Text wird ausgelesen – Diagramme/Bilder werden aktuell noch nicht berücksichtigt.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
             Button("PDFs auswählen") { showFilePicker = true }
                 .buttonStyle(.borderedProminent)
-                .disabled(remainingFolderCapacity == 0)
             Spacer()
         }
         .padding()
@@ -196,7 +176,7 @@ struct PDFImportView: View {
                 .font(.headline)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal)
-            Text("Maximal \(remainingCapacity) Karten passen in den neuen Unterordner (Ordner-Gesamtlimit \(maxFlashcardsPerFolder), Unterordner-Limit \(maxFlashcardsPerSubfolder)). GPT füllt nicht künstlich auf, wenn weniger wirklich wichtig ist.")
+            Text("GPT füllt nicht künstlich auf, wenn weniger wirklich wichtig ist.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -243,7 +223,7 @@ struct PDFImportView: View {
             .padding(.vertical, 8)
         }
         .buttonStyle(.bordered)
-        .disabled(!isNameValid || remainingCapacity == 0)
+        .disabled(!isNameValid)
     }
 
     // MARK: - Phase 3: Verarbeitung
@@ -321,7 +301,7 @@ struct PDFImportView: View {
                             candidateRow($candidate)
                         }
                     } header: {
-                        Text("\(selectedCount) von \(candidates.count) ausgewählt — max. \(remainingCapacity) passen in \"\(subfolderName)\"")
+                        Text("\(selectedCount) von \(candidates.count) ausgewählt")
                     }
                 }
                 saveButton
@@ -359,7 +339,7 @@ struct PDFImportView: View {
         }
         .buttonStyle(.borderedProminent)
         .padding()
-        .disabled(selectedCount == 0 || selectedCount > remainingCapacity || isSaving)
+        .disabled(selectedCount == 0 || isSaving)
     }
 
     private func saveSelected() {
@@ -397,7 +377,7 @@ struct PDFImportView: View {
             isSaving = false
 
             if failedCount > 0 {
-                errorMessage = "\(failedCount) Karte(n) konnten nicht gespeichert werden (z.B. weil das Ordner-Gesamtlimit erreicht wurde). Die übrigen wurden im neuen Unterordner \"\(subfolderName)\" angelegt."
+                errorMessage = "\(failedCount) Karte(n) konnten nicht gespeichert werden. Die übrigen wurden im neuen Unterordner \"\(subfolderName)\" angelegt. Tippe erneut auf Speichern für einen weiteren Versuch."
             } else {
                 dismiss()
             }

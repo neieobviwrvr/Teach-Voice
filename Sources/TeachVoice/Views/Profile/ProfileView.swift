@@ -19,6 +19,10 @@ struct ProfileView: View {
     @State private var isDeletingAccount = false
     @State private var deleteAccountError: String?
 
+    /// Strenge der KI-Bewertung im Sprach-Modus (siehe `Zielnote`). Wird
+    /// beim Start jeder Sprach-Session über `Zielnote.gespeichert` gelesen.
+    @AppStorage(Zielnote.speicherSchluessel) private var zielnoteWert = Zielnote.standardWert
+
     var body: some View {
         NavigationStack {
             List {
@@ -28,6 +32,20 @@ struct ProfileView: View {
                     } label: {
                         Label("Vorlesestimme wählen", systemImage: "waveform")
                     }
+                }
+
+                Section {
+                    Stepper(
+                        value: $zielnoteWert,
+                        in: Zielnote.minWert...Zielnote.maxWert,
+                        step: Zielnote.schrittweite
+                    ) {
+                        Label("Zielnote: \(Zielnote(zielnoteWert).anzeige)", systemImage: "graduationcap")
+                    }
+                } header: {
+                    Text("Bewertung im Sprach-Modus")
+                } footer: {
+                    Text("\(Zielnote(zielnoteWert).beschreibung) Wie du die Kernthemen formulierst, ist egal – auch umgangssprachlich ohne Fachwort zählt.")
                 }
 
                 // Claude-Konnektor: nur mit Konto, weil Gast-Karten

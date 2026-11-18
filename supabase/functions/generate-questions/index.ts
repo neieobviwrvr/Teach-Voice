@@ -23,7 +23,7 @@
 import { checkRateLimit, resolveIdentity } from "../_shared/rateLimit.ts";
 
 const OPENAI_MODEL = "gpt-4o-mini";
-const MAX_QUESTIONS_CEILING = 25; // muss mit maxFlashcardsPerSubfolder (Models.swift) übereinstimmen
+const MAX_QUESTIONS_CEILING = 25; // höchste Auswahl im PDF-Import ("Viele", PDFImportView); kein Kartenlimit mehr
 const MAX_TEXT_LENGTH = 80_000; // muss mit PDFTextExtractor.characterCap (Swift) übereinstimmen
 // 40 statt anfangs 20: eine ganze Vorlesung wochenweise als eigene
 // Unterordner zu importieren (z.B. 13 Wochen laut Simons Beispiel-Syllabus)

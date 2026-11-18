@@ -1,8 +1,8 @@
 // supabase/functions/teach-mcp/index.ts
 //
 // MCP-Server ("Konnektor") für Claude: Claude kann darüber die Teach-
-// Bibliothek eines Nutzers ansehen und neue Unterordner + Karteikarten
-// anlegen. Die App liest die Karten danach ganz normal aus Supabase.
+// Bibliothek eines Nutzers ansehen und neue Ordner, Unterordner und
+// Karteikarten anlegen. Die App liest die Karten danach ganz normal aus Supabase.
 //
 // v1 kann bewusst nur LESEN und NEU ANLEGEN (Simons Entscheidung): kein
 // Ändern, kein Löschen -- ein Fehler der KI kann so nichts kaputtmachen.
@@ -30,20 +30,19 @@ import { z } from "npm:zod@^4.3.6";
 
 import { hashConnectorKey, looksLikeConnectorKey } from "../_shared/connectorKey.ts";
 import { checkRateLimit } from "../_shared/rateLimit.ts";
-import { ServiceRestError, serviceRest } from "../_shared/serviceRest.ts";
+import { serviceRest } from "../_shared/serviceRest.ts";
 
-// Limits -- müssen mit Models.swift (`maxFlashcardsPerSubfolder`,
-// `maxFlashcardsPerFolder`) und dem DB-Trigger `enforce_flashcard_limit`
-// (0007_unlimited_subfolders.sql) übereinstimmen. Der Trigger bleibt die
-// letzte Instanz; die Zahlen hier sind für verständliche Meldungen an Claude.
-const MAX_FLASHCARDS_PER_SUBFOLDER = 25;
-const MAX_FLASHCARDS_PER_FOLDER = 50;
+// Keine Mengen-Limits für Ordner/Unterordner/Karten mehr (Simons Entscheidung
+// fürs MVP, siehe 0013_remove_limits.sql). Nur die Anzahl Karten PRO AUFRUF
+// ist gedeckelt, damit ein einzelner Request überschaubar groß bleibt --
+// mehr Karten legt Claude einfach mit mehreren Aufrufen an.
+const MAX_CARDS_PER_CALL = 50;
 
 // Frage <= MAX_TEXT_LENGTH in text-to-speech (sonst nicht vorlesbar),
 // Antwort <= MAX_ANSWER_LENGTH in grade-answer (sonst nicht bewertbar).
 const MAX_QUESTION_LENGTH = 2_000;
 const MAX_ANSWER_LENGTH = 5_000;
-const MAX_SUBFOLDER_NAME_LENGTH = 100;
+const MAX_NAME_LENGTH = 100;
 
 // Zählt JEDE MCP-Anfrage (auch initialize/tools/list, die Claude zu Beginn
 // jedes Chats schickt). Kein OpenAI-Kostenrisiko hier, nur DB-Zugriffe --
@@ -56,13 +55,13 @@ const LAST_USED_UPDATE_INTERVAL_MS = 5 * 60 * 1000;
 
 const SERVER_INSTRUCTIONS = `Teach (Voice) ist eine Karteikarten-App fürs Lernen per Sprache: Die App liest die Frage vor, der Nutzer antwortet laut, und eine KI bewertet die Antwort danach, wie viele Kernpunkte der Musterantwort genannt wurden.
 
-Struktur: Ordner -> Unterordner -> Karteikarten (Frage + Musterantwort). Limits: höchstens ${MAX_FLASHCARDS_PER_SUBFOLDER} Karten pro Unterordner und ${MAX_FLASHCARDS_PER_FOLDER} pro Ordner (über alle Unterordner zusammen). Ordner selbst kann dieser Konnektor nicht anlegen.
+Struktur: Ordner (z.B. ein Fach) -> Unterordner (z.B. ein Thema oder Kapitel) -> Karteikarten (Frage + Musterantwort). Es gibt keine Mengen-Limits.
 
 Ablauf:
-1. list_library aufrufen, um Ordner, Unterordner, IDs und freie Plätze zu sehen.
-2. Bei Bedarf mit create_subfolder einen neuen Unterordner anlegen.
+1. list_library aufrufen, um Ordner, Unterordner und IDs zu sehen.
+2. Fehlt der passende Ordner, mit create_folder anlegen. Fehlt das passende Thema, mit create_subfolder einen Unterordner anlegen.
 3. Vor dem Ergänzen eines bestehenden Unterordners list_flashcards aufrufen, um Doppelungen zu vermeiden.
-4. Mit add_flashcards die Karten anlegen.
+4. Mit add_flashcards die Karten anlegen (höchstens ${MAX_CARDS_PER_CALL} pro Aufruf, bei mehr einfach mehrere Aufrufe).
 
 Der Konnektor kann keine bestehenden Karten ändern oder löschen. Das geht nur in der App.`;
 
@@ -206,7 +205,7 @@ function buildServer(userId: string): McpServer {
     {
       title: "Teach-Bibliothek anzeigen",
       description:
-        "Zeigt alle Ordner und Unterordner des Nutzers mit IDs, Kartenanzahl und freien Plätzen. Immer zuerst aufrufen, bevor Karten angelegt werden.",
+        "Zeigt alle Ordner und Unterordner des Nutzers mit IDs und Kartenanzahl. Immer zuerst aufrufen, bevor Ordner oder Karten angelegt werden.",
       annotations: { readOnlyHint: true, openWorldHint: false },
     },
     safe(async () => {
@@ -226,35 +225,25 @@ function buildServer(userId: string): McpServer {
       const ordner = folders.map((folder) => {
         const own = subfolders.filter((s) => s.folder_id === folder.id);
         const folderTotal = own.reduce((sum, s) => sum + (cardsPerSubfolder.get(s.id) ?? 0), 0);
-        const folderFree = Math.max(0, MAX_FLASHCARDS_PER_FOLDER - folderTotal);
         return {
           id: folder.id,
           name: folder.name,
           karten_gesamt: folderTotal,
-          freie_plaetze_im_ordner: folderFree,
-          unterordner: own.map((s) => {
-            const count = cardsPerSubfolder.get(s.id) ?? 0;
-            return {
-              id: s.id,
-              name: s.name,
-              karten: count,
-              // Effektiv frei: Unterordner- UND Ordner-Limit gelten beide.
-              freie_plaetze: Math.min(Math.max(0, MAX_FLASHCARDS_PER_SUBFOLDER - count), folderFree),
-            };
-          }),
+          unterordner: own.map((s) => ({
+            id: s.id,
+            name: s.name,
+            karten: cardsPerSubfolder.get(s.id) ?? 0,
+          })),
         };
       });
 
       if (ordner.length === 0) {
         return textResult({
           ordner: [],
-          hinweis: "Der Nutzer hat noch keinen Ordner. Ordner lassen sich nur in der App anlegen.",
+          hinweis: "Der Nutzer hat noch keinen Ordner. Lege mit create_folder einen an.",
         });
       }
-      return textResult({
-        ordner,
-        limits: { karten_pro_unterordner: MAX_FLASHCARDS_PER_SUBFOLDER, karten_pro_ordner: MAX_FLASHCARDS_PER_FOLDER },
-      });
+      return textResult({ ordner });
     })
   );
 
@@ -277,12 +266,45 @@ function buildServer(userId: string): McpServer {
       return textResult({
         unterordner: subfolder.name,
         karten: cards.map((c, i) => ({ nr: i + 1, frage: c.question, antwort: c.answer })),
-        freie_plaetze: await freeSlots(userId, subfolder, cards.length),
       });
     })
   );
 
   // --- Neu anlegen ---------------------------------------------------------
+
+  server.registerTool(
+    "create_folder",
+    {
+      title: "Ordner anlegen",
+      description:
+        "Legt einen neuen, leeren Ober-Ordner an (z.B. für ein Fach) und gibt seine ID zurück. Vorher mit list_library prüfen, ob es einen passenden Ordner schon gibt.",
+      inputSchema: z.object({
+        name: z.string().trim().min(1).max(MAX_NAME_LENGTH).describe("Name des neuen Ordners"),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    },
+    safe(async ({ name }: { name: string }) => {
+      // Doppelte Namen abfangen, z.B. wenn Claude nach einem Timeout erneut
+      // versucht -- sonst entstehen zwei gleichnamige Ordner.
+      const existing = await serviceRest<FolderRow[]>(`folders?user_id=eq.${userId}&select=id,name`);
+      const duplicate = existing.find((f) => normalize(f.name) === normalize(name));
+      if (duplicate) {
+        return errorResult(
+          `Es gibt bereits einen Ordner "${duplicate.name}" (id ${duplicate.id}). Nutze ihn mit create_subfolder oder wähle einen anderen Namen.`
+        );
+      }
+
+      // `position` bleibt beim DB-Default 0 wie beim Anlegen in der App: die
+      // App sortiert nach `position, created_at`, der neue Ordner steht also hinten.
+      const inserted = await serviceRest<FolderRow[]>("folders?select=id,name", {
+        method: "POST",
+        body: { user_id: userId, name },
+        prefer: "return=representation",
+      });
+      const created = inserted[0];
+      return textResult({ angelegt: true, ordner: { id: created.id, name: created.name } });
+    })
+  );
 
   server.registerTool(
     "create_subfolder",
@@ -291,7 +313,7 @@ function buildServer(userId: string): McpServer {
       description: "Legt in einem bestehenden Ordner einen neuen, leeren Unterordner an und gibt seine ID zurück.",
       inputSchema: z.object({
         folder_id: z.uuid().describe("ID des Ordners aus list_library"),
-        name: z.string().trim().min(1).max(MAX_SUBFOLDER_NAME_LENGTH).describe("Name des neuen Unterordners"),
+        name: z.string().trim().min(1).max(MAX_NAME_LENGTH).describe("Name des neuen Unterordners"),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -322,7 +344,6 @@ function buildServer(userId: string): McpServer {
         angelegt: true,
         ordner: folder.name,
         unterordner: { id: created.id, name: created.name },
-        freie_plaetze: await freeSlots(userId, created, 0),
       });
     })
   );
@@ -331,7 +352,7 @@ function buildServer(userId: string): McpServer {
     "add_flashcards",
     {
       title: "Karteikarten anlegen",
-      description: `Legt neue Karteikarten in einem Unterordner an (1-${MAX_FLASHCARDS_PER_SUBFOLDER} pro Aufruf). Passt die Menge nicht in die freien Plätze, wird nichts angelegt. Fragen, die es im Unterordner schon gibt, werden übersprungen.\n\n${CARD_STYLE_GUIDE}`,
+      description: `Legt neue Karteikarten in einem Unterordner an (1-${MAX_CARDS_PER_CALL} pro Aufruf, für mehr einfach mehrmals aufrufen). Fragen, die es im Unterordner schon gibt, werden übersprungen.\n\n${CARD_STYLE_GUIDE}`,
       inputSchema: z.object({
         subfolder_id: z.uuid().describe("ID des Unterordners aus list_library oder create_subfolder"),
         cards: z
@@ -342,7 +363,7 @@ function buildServer(userId: string): McpServer {
             })
           )
           .min(1)
-          .max(MAX_FLASHCARDS_PER_SUBFOLDER),
+          .max(MAX_CARDS_PER_CALL),
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
@@ -367,16 +388,8 @@ function buildServer(userId: string): McpServer {
         }
       }
 
-      const free = await freeSlots(userId, subfolder, existingCards.length);
       if (toInsert.length === 0) {
-        return textResult({ angelegt: 0, uebersprungen_weil_schon_vorhanden: skipped, freie_plaetze: free });
-      }
-      if (toInsert.length > free) {
-        return errorResult(
-          `Nichts angelegt: ${toInsert.length} neue Karten passen nicht, im Unterordner "${subfolder.name}" sind nur noch ${free} Plätze frei ` +
-            `(höchstens ${MAX_FLASHCARDS_PER_SUBFOLDER} pro Unterordner und ${MAX_FLASHCARDS_PER_FOLDER} pro Ordner). ` +
-            `Lege höchstens ${free} Karten an oder nutze einen anderen Unterordner.`
-        );
+        return textResult({ angelegt: 0, uebersprungen_weil_schon_vorhanden: skipped });
       }
 
       // Die App sortiert nach `position, created_at`. Alle Karten eines
@@ -394,23 +407,14 @@ function buildServer(userId: string): McpServer {
         created_at: new Date(base + i).toISOString(),
       }));
 
-      try {
-        await serviceRest<null>("flashcards", { method: "POST", body: rows, prefer: "return=minimal" });
-      } catch (err) {
-        // Der Limit-Trigger meldet sich mit "Maximal …" (z.B. wenn parallel
-        // in der App Karten dazugekommen sind). Der Insert ist atomar: es
-        // wurde dann gar nichts gespeichert.
-        if (err instanceof ServiceRestError && err.body.includes("Maximal")) {
-          return errorResult(`Nichts angelegt: ${extractDbMessage(err.body)}`);
-        }
-        throw err;
-      }
+      // Der Insert ist atomar: schlägt er fehl, ist gar nichts gespeichert
+      // (`safe` meldet das dann lesbar an Claude).
+      await serviceRest<null>("flashcards", { method: "POST", body: rows, prefer: "return=minimal" });
 
       return textResult({
         angelegt: toInsert.length,
         unterordner: subfolder.name,
         karten_im_unterordner: existingCards.length + toInsert.length,
-        freie_plaetze: free - toInsert.length,
         uebersprungen_weil_schon_vorhanden: skipped,
         hinweis: "In der App erscheinen die Karten beim nächsten Öffnen des Unterordners oder nach Runterziehen der Liste.",
       });
@@ -435,39 +439,8 @@ async function cardsIn(userId: string, subfolderId: string): Promise<CardRow[]> 
   );
 }
 
-/// Freie Plätze im Unterordner, wenn er aktuell `subfolderCount` Karten hat:
-/// das Minimum aus Unterordner-Limit und Ordner-Gesamtlimit.
-async function freeSlots(userId: string, subfolder: SubfolderRow, subfolderCount: number): Promise<number> {
-  const siblings = await serviceRest<{ id: string }[]>(
-    `subfolders?folder_id=eq.${subfolder.folder_id}&user_id=eq.${userId}&select=id`
-  );
-  let folderTotal = 0;
-  if (siblings.length > 0) {
-    const ids = siblings.map((s) => s.id).join(",");
-    const folderCards = await serviceRest<{ subfolder_id: string }[]>(
-      `flashcards?user_id=eq.${userId}&subfolder_id=in.(${ids})&select=subfolder_id`
-    );
-    folderTotal = folderCards.length;
-  }
-  const subfolderFree = MAX_FLASHCARDS_PER_SUBFOLDER - subfolderCount;
-  const folderFree = MAX_FLASHCARDS_PER_FOLDER - folderTotal;
-  return Math.max(0, Math.min(subfolderFree, folderFree));
-}
-
 function normalize(text: string): string {
   return text.trim().replace(/\s+/g, " ").toLowerCase();
-}
-
-/// PostgREST liefert Fehler als JSON mit `message` -- nur die lesbare
-/// Trigger-Meldung an Claude weitergeben.
-function extractDbMessage(body: string): string {
-  try {
-    const parsed = JSON.parse(body);
-    if (typeof parsed?.message === "string") return parsed.message;
-  } catch {
-    // kein JSON
-  }
-  return "Karten-Limit erreicht.";
 }
 
 function jsonResponse(body: unknown, status: number): Response {

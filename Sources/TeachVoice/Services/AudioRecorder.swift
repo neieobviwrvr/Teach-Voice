@@ -102,7 +102,7 @@ final class AudioRecorder: NSObject, ObservableObject {
     /// ließ sich die eigene Stimme der App nicht zuverlässig von Umgebungs-
     /// lärm (z.B. vorbeifahrende Autos) unterscheiden. Aufrufer starten die
     /// Aufnahme jetzt erst, NACHDEM die Ansage komplett durchgelaufen ist
-    /// (siehe HandsFreeStudyView).
+    /// (siehe VoiceStudyView).
     func recordUntilSilence(
         calibrationDuration: TimeInterval = 1.0,
         silenceMargin: Float = 12.0,

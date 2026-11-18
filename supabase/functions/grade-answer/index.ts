@@ -68,6 +68,12 @@ interface GradingResult {
   fehlende_elemente: string[];
   urteil: "richtig" | "teilweise" | "falsch";
   kurzes_feedback: string;
+  // Kurze, vorlesbare richtige Antwort (1-2 Sätze), Schwerpunkt auf dem, was
+  // gefehlt hat. Die App liest sie im Sprach-Modus vor, wenn die Antwort
+  // nicht als "richtig" gilt (Simons Wunsch: "nach jeder Frage eine richtige
+  // Antwort, die aber nicht zu lange geht"). Kommt im selben Aufruf mit,
+  // kostet also keinen zusätzlichen OpenAI-Request.
+  kurzloesung: string;
 }
 
 interface GradeResponse {
@@ -264,6 +270,13 @@ ${kernelemente.map((e, i) => `${i + 1}. ${e}`).join("\n")}
 
 Gesprochene Antwort (STT-Transkript): ${sttText}
 
+Zu "kurzloesung": Das ist die richtige Antwort zum VORLESEN, direkt nachdem die/der Studierende
+geantwortet hat. Höchstens 2 kurze Sätze, insgesamt höchstens 30 Wörter. Konzentriere dich auf
+die Kernelemente, die gefehlt haben; was schon richtig genannt wurde, nicht wiederholen. Wurde
+alles getroffen, fasse die Antwort in einem Satz zusammen. Schreib so, wie man es laut sagt:
+keine Aufzählungszeichen, keine Klammern, keine Abkürzungen, kein Markdown, und sprich die
+Person nicht an ("Richtig ist: ..." statt "Du hättest ... sagen sollen").
+
 Antworte NUR mit einem JSON-Objekt exakt dieser Form:
 {
   "kernelemente_getroffen": <Zahl>,
@@ -271,7 +284,8 @@ Antworte NUR mit einem JSON-Objekt exakt dieser Form:
   "getroffene_elemente": ["..."],
   "fehlende_elemente": ["..."],
   "urteil": "richtig" | "teilweise" | "falsch",
-  "kurzes_feedback": "<max. 1 Satz auf Deutsch an den/die Studierende(n)>"
+  "kurzes_feedback": "<max. 1 Satz auf Deutsch an den/die Studierende(n)>",
+  "kurzloesung": "<höchstens 2 kurze Sätze, siehe oben>"
 }
 
 Urteil-Schwellen: ab ${THRESHOLD_RICHTIG}% Deckung "richtig", ab ${THRESHOLD_TEILWEISE}% "teilweise", darunter "falsch".`;
@@ -285,6 +299,9 @@ Urteil-Schwellen: ab ${THRESHOLD_RICHTIG}% Deckung "richtig", ab ${THRESHOLD_TEI
   const pct = Number(parsed.deckung_prozent) || 0;
   const urteil: GradingResult["urteil"] =
     pct >= THRESHOLD_RICHTIG ? "richtig" : pct >= THRESHOLD_TEILWEISE ? "teilweise" : "falsch";
+  // Fehlt das Feld (Modell hält sich nicht ans Format), lieber leer lassen:
+  // die App zeigt dann einfach die Musterantwort, statt nichts vorzulesen.
+  const kurzloesung = typeof parsed.kurzloesung === "string" ? parsed.kurzloesung.trim() : "";
 
-  return { ...parsed, deckung_prozent: pct, urteil };
+  return { ...parsed, deckung_prozent: pct, urteil, kurzloesung };
 }

@@ -7,20 +7,19 @@ struct FlashcardListView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var showAddCard = false
     @State private var editingCard: Flashcard?
-    @State private var showStrictnessPicker = false
-    @State private var pendingStrictness: GradingStrictness?
+    @State private var studyScope: StudyScope?
+    @State private var studyRequest: StudySessionRequest?
 
     private var cards: [Flashcard] { library.flashcards(in: subfolder) }
-    private var isFull: Bool { cards.count >= maxFlashcardsPerSubfolder }
 
     var body: some View {
         List {
             if !cards.isEmpty {
                 Section {
                     Button {
-                        showStrictnessPicker = true
+                        studyScope = StudyScope(title: subfolder.name, cards: cards)
                     } label: {
-                        Label("Lernen starten (Sprachmodus)", systemImage: "waveform")
+                        Label("Lernen", systemImage: "graduationcap")
                     }
                 }
             }
@@ -57,22 +56,17 @@ struct FlashcardListView: View {
                     }
                 }
             } header: {
-                Text("\(cards.count)/\(maxFlashcardsPerSubfolder) Karteikarten")
+                Text("\(cards.count) Karteikarten")
             } footer: {
                 Text("Tippe auf eine Karte, um Frage oder Antwort nachträglich zu ändern.")
             }
         }
         .navigationTitle(subfolder.name)
-        .navigationDestination(item: $pendingStrictness) { strictness in
-            StudyView(subfolder: subfolder, cards: cards, strictness: strictness)
+        .navigationDestination(item: $studyRequest) { request in
+            StudySessionView(request: request)
         }
-        .confirmationDialog("Wie streng bewerten?", isPresented: $showStrictnessPicker, titleVisibility: .visible) {
-            ForEach(GradingStrictness.allCases) { mode in
-                Button(mode.label) { pendingStrictness = mode }
-            }
-            Button("Abbrechen", role: .cancel) {}
-        } message: {
-            Text(GradingStrictness.normal.description + "\n" + GradingStrictness.tryhard.description)
+        .studyModeDialog(scope: $studyScope) { request in
+            studyRequest = request
         }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
@@ -81,7 +75,6 @@ struct FlashcardListView: View {
                 } label: {
                     Label("Karteikarte hinzufügen", systemImage: "plus")
                 }
-                .disabled(isFull)
             }
         }
         .overlay {
@@ -99,7 +92,7 @@ struct FlashcardListView: View {
         // zeigen, wenn man in die App zurückwechselt. Nicht während einer
         // laufenden Lernsession, die ihre Karten beim Start mitbekommt.
         .onChange(of: scenePhase) { _, phase in
-            guard phase == .active, pendingStrictness == nil else { return }
+            guard phase == .active, studyRequest == nil else { return }
             Task { await library.loadFlashcards(for: subfolder) }
         }
         .sheet(isPresented: $showAddCard) {

@@ -7,40 +7,38 @@ iOS-App (SwiftUI) für sprachbasiertes Karteikarten-Lernen an der Uni:
 
 ## Lernmodi
 
-Drei bewusst getrennte Modi, je nach Anwendungsfall:
+Zwei Modi (Simons MVP-Entscheidung). Gestartet wird über den „Lernen“-Button auf dem Homescreen (Mindmap-Pille für einen Unterordner oder „Ganzer Ordner“), über „Ganzen Ordner lernen“ in einem Ordner oder über „Lernen“ in einem Unterordner. Danach fragt ein Dialog den Modus ab (`Views/Study/StudyLauncher.swift`):
 
-- **Detail** (Button in einem Unterordner): visuell, zeigt KI-Feedback (Deckung, fehlende Kernelemente, Musterantwort) und lässt dich per Buttons selbst einschätzen (richtig/teilweise/falsch) – ein Tap navigiert direkt zur nächsten Karte. Die KI-Einschätzung ist nur ein vorbelegter Vorschlag.
-- **Hands-free (Voice only)** (Button auf dem Homescreen): komplett sprachgesteuertes Menü (`HandsFreeStudyView`) – die App fragt selbst per TTS, welchen Unterordner man lernen will, zählt alle Unterordner auf, hört per Mikrofon zu (lokaler Zahl-/Namensabgleich, kein GPT-Call, siehe Memory `handsfree-voice-menu-folder-matching`). Danach: Frage vorlesen → 1,5s Pause → Mikrofon öffnet automatisch → Aufnahme endet nach 3s Stille NACH dem ersten erkannten Sprechen (eine Denkpause vor dem ersten Wort zählt bewusst nicht mit, passt sich sonst an Umgebungslautstärke an) oder per "Lösung abgeben" → Transkription+Bewertung → Ton + Vibration (richtig/falsch; "teilweise" bekommt bewusst keinen Ton, nur 1s Extra-Stille) → Musterantwort erscheint zusätzlich auf dem Display → 2,5s Pause → nächste Frage. Am Ende: Statistik wird **gleichzeitig vorgelesen und angezeigt**, Weiterlernen läuft per Ja/Nein-Sprachabfrage (mit Retry + sichtbarem Pop-up-Fallback bei Unklarheit); zusätzlich ein "Anderen Unterordner wählen"-Button und "Zurück zum Homescreen".
-- **Hands-free lernen (Eigenbewertung)** (zweiter Homescreen-Button, `HandsFreeSelfAssessmentStudyView`): Frage/Aufnahme laufen automatisch wie bei Voice-only, aber nach der Bewertung erscheinen die drei Selbsteinschätzungs-Buttons und die Schleife wartet auf einen Tap (kein Ton) – die Selbsteinschätzung ist das maßgebliche Spaced-Repetition-Signal; auch hier erscheint die Musterantwort nach der Bewertung zusätzlich auf dem Display. Unterordner-Auswahl und Rundenabschluss laufen bewusst über das **sichtbare Pop-up** (inkl. "Alle Unterordner lernen"-Option mit Kartenanzahl) statt über ein Sprachmenü, da man hier ohnehin pro Frage antippen muss; die Statistik wird trotzdem zusätzlich vorgelesen.
+- **Sprechen** (`VoiceStudyView`, früher „Hands-free mit Eigenbewertung“): Frage wird vorgelesen → Signalton → Mikrofon geht von selbst an → Aufnahme endet nach **8 s Stille** nach dem ersten Wort (Denkpausen davor zählen nicht; Sicherheitsnetz 90 s) oder per „Fertig“ → Whisper transkribiert → KI prüft die Kernthemen → ist die Antwort laut Zielnote nicht richtig, wird eine **Kurzlösung** (1–2 Sätze, Schwerpunkt auf dem, was gefehlt hat) vorgelesen und groß angezeigt, die ganze Musterantwort lässt sich aufklappen → man tippt Falsch/Teilweise/Richtig (der KI-Vorschlag ist hervorgehoben) → nächste Frage. Wird nichts erkannt oder ist die KI nicht erreichbar, sieht man die Musterantwort und bewertet selbst – die Karte geht nicht verloren.
+- **Tippen (Anki-Stil)** (`AnkiStudyView`): Frage lesen (optional vorlesen lassen) → „Antwort zeigen“ → Falsch/Teilweise/Richtig. Kein Mikrofon, keine KI, keine Kosten.
 
-Alle drei Modi enden mit einem **Statistik-Screen** (X von Y richtig, aufklappbare Detailliste pro Karte via `SessionSummaryView`).
+Beide Modi enden mit einem **Statistik-Screen** (`Views/Study/SessionSummaryView.swift`): wie viele Karten auf Anhieb richtig/teilweise/falsch waren, wie viele Wiederholungen nötig waren, Detailliste, „Alle Karten nochmal üben“.
 
-## Bewertungs-Strenge (Normal / Tryhard)
+## Bewertung im Sprach-Modus (Zielnote)
 
-Vor jeder Lernsession (Detail wie Hands-free) wählt man `Core/GradingStrictness.swift`: **Normal** (≥65% Deckung = richtig, ≥45% = teilweise) oder **Tryhard** (≥85% / ≥65%, nur präzise vollständige Antworten zählen). Bewusst **pro Session frei wählbar, nicht global fix** (Simons Entscheidung) – das bedeutet, dieselbe Karte kann je nach gewähltem Modus unterschiedlich in die Spaced-Repetition-Box einsortiert werden. Diese eine Einstellung steuert einheitlich: die Selbsteinschätzungs-Vorbelegung im Detail-Modus, den Erfolgs-/Fehler-Ton im Hands-free-Modus, und das Spaced-Repetition-Signal in beiden Modi.
+Die KI (`grade-answer`) zerlegt die Musterantwort in Kernthemen und prüft jedes **sinngemäß** – andere Worte, umgangssprachlich statt Fachbegriff und Erkennungsfehler von Whisper zählen trotzdem. Heraus kommt, wie viel Prozent der Kernthemen getroffen wurden.
+
+Die **Zielnote** (Profil → „Bewertung im Sprach-Modus“, `Core/Zielnote.swift`, Standard 2,3) legt fest, ab wie viel Prozent eine Antwort als richtig gilt: linear 15 Prozentpunkte pro Notenstufe (1,0 → 95 %, 2,0 → 80 %, 3,0 → 65 %, 4,0 → 50 %), „teilweise“ jeweils 20 Punkte darunter. Sie steuert den hervorgehobenen KI-Vorschlag und ob die Kurzlösung vorgelesen wird. Wie großzügig die Kernthemen erkannt werden, ändert sie nicht.
 
 ## Spaced Repetition
 
-Einfaches 5-Stufen-Box-System (`Core/SpacedRepetition.swift`), Intervalle 0/1/3/7/14 Tage: richtig = eine Stufe hoch, teilweise = Stufe bleibt gleich, falsch = zurück auf Stufe 1. Signalquelle je Karte:
+Einfaches 5-Stufen-Box-System (`Core/SpacedRepetition.swift`), Intervalle 0/1/3/7/14 Tage: richtig = eine Stufe hoch, teilweise = Stufe bleibt gleich, falsch = zurück auf Stufe 1. Signal ist in beiden Modi immer die **Selbsteinschätzung** (im Sprach-Modus von der KI nur vorgeschlagen).
 
-- **Detail-Modus**: immer die Selbsteinschätzung des Users (maßgeblich, nicht die KI).
-- **Hands-free-Modus** (keine Selbsteinschätzung möglich): GPTs `deckung_prozent`, gemappt über `GradingStrictness` auf dasselbe 3-Stufen-Schema.
-
-Der Hands-free-Modus sortiert Karten nach Fälligkeit (fällige/überfällige zuerst, dann nie bewertete, dann noch nicht fällige) – ausschließlich Reihenfolge, keine Karte wird ausgeschlossen. Der Detail-Modus bleibt unsortiert (Original-Reihenfolge).
+Eine Session (`Core/StudyQueue.swift`) fragt nur **fällige und neue** Karten ab (ist nichts fällig, werden alle geübt). Landet eine Karte nach der Bewertung in Box 1 (0 Tage), kommt sie **in derselben Session hinten wieder dran**, bis sie sitzt.
 
 ## KI-Konnektor (Claude)
 
-Claude kann über einen eigenen MCP-Konnektor (Edge Function `supabase/functions/teach-mcp`) direkt Unterordner und Karteikarten in die eigenen Teach-Ordner schreiben, z.B. „Mach mir 10 Karten zu Kapitel 3 in den Unterordner Sozialpsychologie“. Die App zeigt die neuen Karten beim nächsten Laden an (auch automatisch beim Zurückwechseln in die App).
+Claude kann über einen eigenen MCP-Konnektor (Edge Function `supabase/functions/teach-mcp`) direkt Ordner, Unterordner und Karteikarten in die eigene Teach-Bibliothek schreiben, z.B. „Mach mir 10 Karten zu Kapitel 3 in den Unterordner Sozialpsychologie“. Die App zeigt die neuen Karten beim nächsten Laden an (auch automatisch beim Zurückwechseln in die App).
 
 - **Einrichten**: In der App unter Profil → KI-Konnektor einen persönlichen Schlüssel erzeugen. In Claude unter Einstellungen → Konnektoren einen eigenen Konnektor mit der angezeigten URL anlegen und als Request-Header `Authorization: Bearer <Schlüssel>` eintragen. Im kostenlosen Claude-Abo ist ein eigener Konnektor möglich.
-- **Was Claude darf**: Bibliothek und vorhandene Karten lesen, neue Unterordner und Karten anlegen. Ändern oder Löschen geht bewusst nur in der App.
+- **Was Claude darf**: Bibliothek und vorhandene Karten lesen, neue Ordner, Unterordner und Karten anlegen (höchstens 50 Karten pro Aufruf). Ändern oder Löschen geht bewusst nur in der App.
 - **Nur mit Konto**: Gast-Karten liegen ausschließlich auf dem iPhone, dort kommt der Konnektor nicht hin.
 - **Sicherheit**: Gespeichert wird nur ein Hash des Schlüssels (`connector_keys`, siehe `supabase/migrations/0012_connector_keys.sql`). Ein neuer Schlüssel ersetzt den alten, gesperrte Schlüssel wirken sofort. Für fremde Nutzer oder ChatGPT ist später OAuth statt Schlüssel vorgesehen.
 
 ## Struktur
 
 - Ordner (Ober-Ordner, umbenennbar) → Unterordner (umbenennbar) → Karteikarten (Frage + Antwort, nachträglich bearbeitbar).
-- **Harte Limits für die Startphase** (ausdrücklich vorläufig, siehe `Models.swift`): max. **2 Ober-Ordner** pro Nutzer, **unbegrenzt viele Unterordner** pro Ober-Ordner, max. **25 Karteikarten** pro einzelnem Unterordner, und zusätzlich max. **50 Karteikarten pro Ober-Ordner insgesamt** (über alle seine Unterordner zusammengerechnet – seit 0007 die eigentliche Bremse, da die Unterordner-Anzahl selbst nicht mehr begrenzt ist). Jeweils per DB-Trigger (Cloud) und Repository-Check (Gastmodus) durchgesetzt, siehe `supabase/migrations/0003_tighter_limits.sql`, `0005_raise_flashcard_limit.sql` und `0007_unlimited_subfolders.sql`.
+- **Keine Mengen-Limits** (MVP, vorerst nur für Simon): beliebig viele Ordner, Unterordner und Karten. Die früheren DB-Trigger entfernt `supabase/migrations/0013_remove_limits.sql`. Längen-Obergrenzen für Fragen/Antworten in den Edge Functions bleiben.
 - Auth: **E-Mail + Passwort** (Supabase) **oder Gastzugang** (rein lokal, kein Konto, kein Server-Roundtrip).
   Sign in with Apple/Google folgt später (siehe Task #9) – aktuell bewusst nicht eingebaut.
 
@@ -77,9 +75,10 @@ Sources/TeachVoice/
   Models/                           # Folder, Subfolder, Flashcard (Codable)
   Stores/LibraryStore.swift         # CRUD-Logik + lokaler State für die Views
   Services/                         # SpeechService (TTS), AudioRecorder, WhisperTranscriber (STT)
-  Views/                            # Auth, Folders, Flashcards, StudyView (Lernmodus)
+  Views/                            # Auth, Folders, Flashcards, Profile, Study (Sprach- und Anki-Modus)
 .github/workflows/build-ipa.yml     # Manueller (workflow_dispatch) macOS-Runner-Build -> unsignierte IPA
-supabase/migrations/0001_init.sql   # DB-Schema, RLS, 20-Karten-Limit
+supabase/migrations/                # DB-Schema, RLS, eine Migration pro Änderung
+supabase/functions/                 # Edge Functions (grade-answer, text-to-speech, teach-mcp, …)
 ```
 
 Es gibt bewusst **keine Auth-/Datenbank-SDK-Abhängigkeit** (kein `supabase-swift`) – Auth und CRUD laufen über schlanke,
@@ -96,6 +95,7 @@ open TeachVoice.xcodeproj
 
 ## Status
 
-Grundgerüst steht: Auth (E-Mail/Passwort), Ordner → Unterordner → Karteikarten (max. 20/Unterordner) mit Supabase-Anbindung,
-TTS-Vorlesen der Frage, STT-Lernmodus mit lokalem Whisper-base. Noch ungetestet, da kein Mac zum Kompilieren verfügbar war –
-der erste echte Build läuft über die GitHub-Actions-Pipeline, ausgelöst auf explizites Kommando.
+MVP-Umfang: Karten entstehen per Claude-Konnektor (oder in der App bzw. per PDF-Import), liegen pro Nutzer in Supabase, sind
+in der App bearbeitbar/löschbar und werden im Sprach- oder Anki-Modus mit Spaced Repetition abgefragt. Gebaut wird nur über
+die GitHub-Actions-Pipeline (kein lokaler Mac), ausgelöst auf explizites Kommando. Neue Migrationen und Edge Functions
+werden ebenfalls nur auf Kommando angewendet bzw. deployt.

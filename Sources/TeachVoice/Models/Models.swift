@@ -53,8 +53,8 @@ struct Flashcard: Codable, Identifiable, Hashable {
     var kernelementeSourceHash: String? = nil
 
     /// Spaced-Repetition-Zustand (5-Stufen-Box-System, siehe `SpacedRepetition`).
-    /// `srsDueAt == nil` bedeutet "noch nie bewertet" – solche Karten werden im
-    /// Hands-free-Modus hinter allen bereits eingeplanten Karten einsortiert.
+    /// `srsDueAt == nil` bedeutet "noch nie bewertet" – solche Karten zählen
+    /// in einer Lern-Session als neu und werden nach den fälligen abgefragt.
     var srsBox: Int = 1
     var srsDueAt: Date? = nil
     var srsLastReviewedAt: Date? = nil
@@ -72,32 +72,6 @@ struct Flashcard: Codable, Identifiable, Hashable {
     }
 }
 
-// Harte Limits für die Startphase (siehe DB-Trigger enforce_folder_limit /
-// enforce_flashcard_limit in supabase/migrations/0003_tighter_limits.sql,
-// 0005_raise_flashcard_limit.sql, 0007_unlimited_subfolders.sql,
-// 0011_raise_folder_limit.sql) – bewusst als benannte Konstanten statt
-// verstreuter Zahlen, da Simon das ausdrücklich als vorläufigen Startwert
-// bezeichnet hat, nicht als endgültige Grenze.
-
-/// Maximale Anzahl Ober-Ordner pro Nutzer. War 1, von Simon auf 2 gelockert
-/// zum Testen des Oberordner-Dropdowns (siehe 0011_raise_folder_limit.sql
-/// für die serverseitige Spiegelung dieses Werts).
-let maxFoldersPerUser = 2
-
-/// Unterordner pro Ober-Ordner sind bewusst UNBEGRENZT (Simons Entscheidung,
-/// siehe 0007_unlimited_subfolders.sql) – begrenzend ist stattdessen
-/// ausschließlich `maxFlashcardsPerFolder` (Gesamtkarten über alle
-/// Unterordner eines Ordners hinweg). `maxSubfoldersPerFolder` existiert
-/// deshalb nicht mehr als Konstante.
-
-/// Maximale Anzahl Karteikarten pro Unterordner. Von 10 auf 25 angehoben, um
-/// den PDF-Import (`PDFImportView`) sinnvoll nutzbar zu machen – bis zu 25
-/// automatisch generierte Fragen sollen in einen Unterordner passen, siehe
-/// `supabase/migrations/0005_raise_flashcard_limit.sql`.
-let maxFlashcardsPerSubfolder = 25
-
-/// Maximale Anzahl Karteikarten pro Ober-Ordner, ÜBER ALLE Unterordner
-/// zusammen gerechnet (neu, siehe 0007_unlimited_subfolders.sql). Das ist die
-/// eigentliche Bremse, seit Unterordner selbst unbegrenzt sind – z.B. 2
-/// Unterordner mit je 25 Karten, oder 5 mit je 10, etc.
-let maxFlashcardsPerFolder = 50
+// Keine Mengen-Limits mehr für Ordner, Unterordner oder Karteikarten (Simons
+// Entscheidung fürs MVP, das vorerst nur er selbst nutzt). Die früheren
+// DB-Trigger entfernt supabase/migrations/0013_remove_limits.sql.

@@ -31,26 +31,37 @@ final class LibraryStore: ObservableObject {
     func subfolders(in folder: Folder) -> [Subfolder] { subfolders[folder.id] ?? [] }
     func flashcards(in subfolder: Subfolder) -> [Flashcard] { flashcards[subfolder.id] ?? [] }
 
-    /// Summe der Karten über ALLE Unterordner eines Ordners – Grundlage für
-    /// `maxFlashcardsPerFolder`. Nur so genau wie die bereits geladenen
-    /// Karten (siehe `loadAllFlashcards`); Server/Repository bleiben die
-    /// eigentliche, exakte Durchsetzung.
+    /// Der aktuelle Stand einer Karte (z.B. mit dem in dieser Session
+    /// gespeicherten Spaced-Repetition-Zustand), falls sie noch geladen ist.
+    /// Gelöschte Karten liefern `nil`.
+    func currentVersion(of card: Flashcard) -> Flashcard? {
+        guard let list = flashcards[card.subfolderId] else { return card }
+        return list.first { $0.id == card.id }
+    }
+
+    /// Summe der Karten über ALLE Unterordner eines Ordners. Nur so genau wie
+    /// die bereits geladenen Karten (siehe `loadAllFlashcards`).
     func totalFlashcardCount(in folder: Folder) -> Int {
         subfolders(in: folder).reduce(0) { $0 + flashcards(in: $1).count }
     }
 
     /// Lädt Karten für JEDEN Unterordner eines Ordners nach, nicht nur den
-    /// zuletzt besuchten – nötig, damit `totalFlashcardCount(in:)` vor einer
-    /// neuen Kartenerstellung (v.a. PDF-Import) wirklich vollständig ist,
-    /// statt Unterordner zu unterschlagen, die der User in dieser Sitzung
-    /// noch nicht geöffnet hat.
-    func loadAllFlashcards(for folder: Folder) async {
-        if subfolders(in: folder).isEmpty {
+    /// zuletzt besuchten – nötig, um einen ganzen Ordner (alle Unterordner)
+    /// abzufragen oder seine Gesamt-Kartenzahl anzuzeigen. `force` lädt auch
+    /// bereits geladene Unterordner neu (z.B. vor einer Lern-Session, damit
+    /// gerade über Claude angelegte Karten mit dabei sind).
+    func loadAllFlashcards(for folder: Folder, force: Bool = false) async {
+        if force || subfolders(in: folder).isEmpty {
             await loadSubfolders(for: folder)
         }
-        for subfolder in subfolders(in: folder) where flashcards[subfolder.id] == nil {
+        for subfolder in subfolders(in: folder) where force || flashcards[subfolder.id] == nil {
             await loadFlashcards(for: subfolder)
         }
+    }
+
+    /// Alle Karten eines Ordners über alle Unterordner, in Unterordner-Reihenfolge.
+    func allFlashcards(in folder: Folder) -> [Flashcard] {
+        subfolders(in: folder).flatMap { flashcards(in: $0) }
     }
 
     // MARK: - Folders
@@ -65,15 +76,10 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    /// Legt einen Ober-Ordner an. Gibt `false` zurück, wenn das Limit erreicht ist
-    /// (clientseitige Vorabprüfung; im Cloud-Modus zusätzlich hart per DB-Trigger,
-    /// im Gastmodus hart im Repository selbst durchgesetzt).
+    /// Legt einen Ober-Ordner an. Gibt `false` zurück, wenn das Anlegen
+    /// fehlschlägt (Fehlertext landet in `errorMessage`).
     @discardableResult
     func addFolder(name: String) async -> Bool {
-        guard folders.count < maxFoldersPerUser else {
-            errorMessage = "Maximal \(maxFoldersPerUser) Ordner erlaubt."
-            return false
-        }
         do {
             let created = try await repository.insertFolder(name: name)
             folders.append(created)
@@ -163,20 +169,10 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    /// Legt eine Karteikarte an. Gibt `false` zurück, wenn `maxFlashcardsPerSubfolder`
-    /// erreicht ist (clientseitige Vorabprüfung für sofortiges UI-Feedback; im Cloud-Modus
-    /// zusätzlich hart per DB-Trigger, im Gastmodus hart im Repository selbst durchgesetzt).
+    /// Legt eine Karteikarte an. Gibt `false` zurück, wenn das Anlegen
+    /// fehlschlägt (Fehlertext landet in `errorMessage`).
     @discardableResult
     func addFlashcard(question: String, answer: String, to subfolder: Subfolder) async -> Bool {
-        guard flashcards(in: subfolder).count < maxFlashcardsPerSubfolder else {
-            errorMessage = "Maximal \(maxFlashcardsPerSubfolder) Karteikarten pro Unterordner."
-            return false
-        }
-        if let folder = folders.first(where: { $0.id == subfolder.folderId }),
-           totalFlashcardCount(in: folder) >= maxFlashcardsPerFolder {
-            errorMessage = "Maximal \(maxFlashcardsPerFolder) Karteikarten pro Ordner (über alle Unterordner zusammen)."
-            return false
-        }
         do {
             let created = try await repository.insertFlashcard(question: question, answer: answer, subfolderId: subfolder.id)
             flashcards[subfolder.id, default: []].append(created)
@@ -229,9 +225,8 @@ final class LibraryStore: ObservableObject {
     }
 
     /// Verbucht ein Lernergebnis im Spaced-Repetition-Box-System und
-    /// persistiert die neue Stufe + Fälligkeit. `urteil` ist bereits die
-    /// aufgelöste Signalquelle (Selbsteinschätzung im Detail-Modus, GPT-Mapping
-    /// im Hands-free-Modus) – die Priorisierung passiert beim Aufrufer.
+    /// persistiert die neue Stufe + Fälligkeit. `urteil` ist die
+    /// Selbsteinschätzung des Users (in beiden Lernmodi).
     @discardableResult
     func recordSpacedRepetitionOutcome(for flashcard: Flashcard, urteil: GradingResult.Urteil) async -> Flashcard? {
         let outcome = SpacedRepetition.nextState(currentBox: flashcard.srsBox, urteil: urteil)

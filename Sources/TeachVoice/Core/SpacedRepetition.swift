@@ -1,16 +1,17 @@
 import Foundation
 
-/// Einfaches 5-Stufen-Box-System für die Wiederholungsplanung im
-/// Hands-free-Modus. Bewusst simpel (kein SM-2/Ease-Factor) für kurzfristiges
-/// Klausurenlernen statt langfristiger Jahres-Retention.
+/// Einfaches 5-Stufen-Box-System für die Wiederholungsplanung. Bewusst simpel
+/// (kein SM-2/Ease-Factor) für kurzfristiges Klausurenlernen statt
+/// langfristiger Jahres-Retention.
 ///
-/// Signalquelle je Review (mit Simon abgestimmt):
-/// - Detail-Modus: die Selbsteinschätzung des Users ist immer maßgeblich
-///   (Tap auf einen der drei Buttons ist zugleich die SRS-Eingabe).
-/// - Hands-free-Modus (keine Selbsteinschätzung möglich): GPTs `deckung_prozent`
-///   wird über `GradingStrictness.urteil(fromDeckungProzent:)` (je nach
-///   gewähltem Normal/Tryhard-Modus der Session) auf dasselbe 3-Stufen-Schema
-///   abgebildet wie die Selbsteinschätzungs-Buttons.
+/// Signalquelle ist in beiden Lernmodi (Sprechen und Tippen) immer die
+/// Selbsteinschätzung des Users – im Sprach-Modus schlägt die KI sie anhand
+/// der Zielnote nur vor (siehe `Zielnote`).
+///
+/// Ablauf einer Session (siehe `StudyQueue`): abgefragt werden nur fällige und
+/// neue Karten (`sessionCards`). Landet eine Karte nach der Bewertung in einer
+/// Box mit 0 Tagen Intervall (`isDueAgainToday`), kommt sie in derselben
+/// Session nochmal dran – so lange, bis sie sitzt.
 enum SpacedRepetition {
     static let minBox = 1
     static let maxBox = 5
@@ -40,10 +41,28 @@ enum SpacedRepetition {
         return Outcome(newBox: newBox, dueAt: dueAt)
     }
 
-    /// Sortiert Karten für den Hands-free-Modus: fällige/überfällige Karten
-    /// zuerst (am längsten überfällig zuerst), danach noch nie bewertete
-    /// Karten, danach noch nicht fällige Karten (am nächsten fällige zuerst).
-    /// Nichts wird ausgeschlossen – "vorrangig" heißt Reihenfolge, nicht Filter.
+    /// Muss die Karte nach diesem Ergebnis noch HEUTE wiederholt werden? Das
+    /// ist genau dann der Fall, wenn ihre neue Box ein Intervall von 0 Tagen
+    /// hat (aktuell nur Box 1: nach "falsch", oder "teilweise" in Box 1).
+    static func isDueAgainToday(_ outcome: Outcome) -> Bool {
+        intervalDays[outcome.newBox - minBox] == 0
+    }
+
+    /// Die Karten für eine normale Lern-Session: fällige/überfällige (am
+    /// längsten überfällig zuerst) und noch nie bewertete Karten. Noch nicht
+    /// fällige Karten bleiben draußen. Ist das Ergebnis leer, kann der
+    /// Aufrufer stattdessen alle Karten über `ordered` anbieten.
+    static func sessionCards(_ cards: [Flashcard], now: Date = Date()) -> [Flashcard] {
+        ordered(cards, now: now).filter { card in
+            guard let dueAt = card.srsDueAt else { return true }
+            return dueAt <= now
+        }
+    }
+
+    /// Sortiert Karten: fällige/überfällige Karten zuerst (am längsten
+    /// überfällig zuerst), danach noch nie bewertete Karten, danach noch nicht
+    /// fällige Karten (am nächsten fällige zuerst). Nichts wird
+    /// ausgeschlossen – das ist die Reihenfolge fürs "alle Karten üben".
     static func ordered(_ cards: [Flashcard], now: Date = Date()) -> [Flashcard] {
         let due = cards.filter { ($0.srsDueAt ?? .distantPast) <= now && $0.srsDueAt != nil }
             .sorted { $0.srsDueAt! < $1.srsDueAt! }

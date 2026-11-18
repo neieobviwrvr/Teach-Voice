@@ -11,6 +11,10 @@ struct GradingResult: Decodable {
     let fehlendeElemente: [String]
     let urteil: Urteil
     let kurzesFeedback: String
+    /// Kurze, vorlesbare richtige Antwort (1-2 Sätze) mit Schwerpunkt auf dem,
+    /// was gefehlt hat. Optional, weil eine ältere, noch nicht neu deployte
+    /// Version von `grade-answer` das Feld nicht mitschickt.
+    let kurzloesung: String?
 
     enum CodingKeys: String, CodingKey {
         case kernelementeGetroffen = "kernelemente_getroffen"
@@ -19,6 +23,7 @@ struct GradingResult: Decodable {
         case fehlendeElemente = "fehlende_elemente"
         case urteil
         case kurzesFeedback = "kurzes_feedback"
+        case kurzloesung
     }
 }
 

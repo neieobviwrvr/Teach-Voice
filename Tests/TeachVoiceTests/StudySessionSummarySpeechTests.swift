@@ -22,9 +22,8 @@ final class StudySessionSummarySpeechTests: XCTestCase {
     }
 
     func testAllZeroReturnsNil() {
-        // Leerer Unterordner o.ä. – der Aufrufer muss dann selbst einen Satz
-        // ohne Statistik-Teil bauen, siehe HandsFreeStudyView/
-        // HandsFreeSelfAssessmentStudyView.
+        // Leere Session o.ä. – der Aufrufer muss dann selbst einen Satz
+        // ohne Statistik-Teil bauen, siehe VoiceStudyView.summarySentence.
         XCTAssertNil(StudySessionSummarySpeech.statsClause(richtig: 0, teilweise: 0, falsch: 0))
     }
 
@@ -36,12 +35,14 @@ final class StudySessionSummarySpeechTests: XCTestCase {
         XCTAssertEqual(StudySessionSummarySpeech.statsClause(richtig: 1, teilweise: 0, falsch: 0), "eine Frage richtig")
     }
 
-    func testMaxOfTenAcrossAllCategories() {
-        // maxFlashcardsPerSubfolder war zum Zeitpunkt dieser Logik 10 (jetzt 25,
-        // siehe SpacedRepetitionTests) – die Zahlwort-Tabelle in
-        // StudySessionSummarySpeech deckt bewusst bis 10 ab, weiter reicht sie
-        // (per Fallback auf String(n)) auch bei größeren Werten.
+    func testTenIsStillANumberWord() {
         let result = StudySessionSummarySpeech.statsClause(richtig: 10, teilweise: 0, falsch: 0)
         XCTAssertEqual(result, "zehn Fragen richtig")
+    }
+
+    func testLargerCountsFallBackToDigits() {
+        // Keine Kartenlimits mehr -- über 10 kommen Ziffern statt Zahlwörtern.
+        let result = StudySessionSummarySpeech.statsClause(richtig: 42, teilweise: 0, falsch: 0)
+        XCTAssertEqual(result, "42 Fragen richtig")
     }
 }

@@ -1,6 +1,6 @@
 import Foundation
 
-/// Baut den gesprochenen Rundenabschluss-Satz für beide Hands-free-Modi:
+/// Baut den gesprochenen Rundenabschluss-Satz für den Sprach-Modus:
 /// nennt nur Kategorien (richtig/teilweise richtig/falsch), die tatsächlich
 /// > 0 sind, mit korrekter Einzahl/Mehrzahl ("eine Frage" vs. "X Fragen") –
 /// explizite Vorgabe von Simon, damit z.B. "null Fragen falsch" nicht mit
@@ -35,8 +35,8 @@ enum StudySessionSummarySpeech {
         return "\(numberWord(count)) Fragen \(suffix)"
     }
 
-    /// Reicht bis 10 – das harte Limit für Karteikarten pro Unterordner
-    /// (`maxFlashcardsPerSubfolder`) macht höhere Zähler unmöglich.
+    /// Zahlwörter bis 10, darüber Ziffern (die Vorlesestimme spricht die
+    /// korrekt aus).
     private static func numberWord(_ n: Int) -> String {
         let words = ["null", "eine", "zwei", "drei", "vier", "fünf", "sechs", "sieben", "acht", "neun", "zehn"]
         guard n >= 0, n < words.count else { return String(n) }
