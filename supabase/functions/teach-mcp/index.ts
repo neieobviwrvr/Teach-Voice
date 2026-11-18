@@ -8,10 +8,20 @@
 // Ändern, kein Löschen -- ein Fehler der KI kann so nichts kaputtmachen.
 //
 // Anmeldung: persönlicher Schlüssel (`tvk_…`), den die App über die Edge
-// Function `connector-key` erzeugt und den man in Claude als Request-Header
-// `Authorization: Bearer tvk_…` einträgt. Hier wird nur sein SHA-256-Hash in
-// `connector_keys` nachgeschlagen (siehe 0012_connector_keys.sql). Für fremde
-// Nutzer / ChatGPT später: OAuth über Supabases OAuth-2.1-Server statt Schlüssel.
+// Function `connector-key` erzeugt. Hauptweg ist der "persönliche
+// Claude-Link" `…/functions/v1/teach-mcp/tvk_…`: der Schlüssel steckt im
+// Pfad, weil Claude beim Hinzufügen eigener Konnektoren in normalen Konten
+// keine Request-Header anbietet (nur Beta für einzelne Organisationen). Der
+// Link ist damit so geheim wie ein Passwort -- Zapier & Co. machen es genauso.
+// Weiter akzeptiert: `?key=tvk_…`, `Authorization: Bearer tvk_…` und
+// `X-Teach-Key` (z.B. für Claude Code oder die API). Hier wird nur der
+// SHA-256-Hash in `connector_keys` nachgeschlagen (siehe
+// 0012_connector_keys.sql). Für fremde Nutzer / ChatGPT später: OAuth über
+// Supabases OAuth-2.1-Server statt Schlüssel.
+//
+// Die Request-URL wird deshalb NIE geloggt. Bekannter, akzeptierter
+// Nachteil: Supabase selbst protokolliert Aufrufpfade in den Function-Logs
+// des Projekts (nur für den Projekt-Owner sichtbar).
 //
 // Deploy NUR mit verify_jwt = false (siehe supabase/config.toml), weil der
 // Schlüssel kein JWT ist -- sonst lehnt das Supabase-Gateway jede Anfrage ab.
@@ -28,7 +38,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createMcpHandler, McpServer } from "npm:@modelcontextprotocol/server@^2.4.0";
 import { z } from "npm:zod@^4.3.6";
 
-import { hashConnectorKey, looksLikeConnectorKey } from "../_shared/connectorKey.ts";
+import { CONNECTOR_KEY_PREFIX, hashConnectorKey, looksLikeConnectorKey } from "../_shared/connectorKey.ts";
 import { checkRateLimit } from "../_shared/rateLimit.ts";
 import { serviceRest } from "../_shared/serviceRest.ts";
 
@@ -75,7 +85,11 @@ Deno.serve(async (req: Request) => {
   // Kein CORS: Claude ruft den Konnektor serverseitig aus der Anthropic-Cloud
   // auf, nicht aus einem Browser.
   try {
-    const userId = await authenticate(req);
+    // Schlüssel aus Pfad/Query herauslösen. Der MCP-Handler bekommt danach
+    // eine bereinigte Kopie des Requests mit der Basis-URL wie vorher, damit
+    // der Schlüssel nirgends weitergereicht oder zurückgegeben wird.
+    const { key: urlKey, cleanedUrl } = splitKeyFromUrl(req.url);
+    const userId = await authenticate(extractHeaderKey(req) ?? urlKey);
     if (!userId) {
       return jsonResponse(
         { error: "Ungültiger oder gesperrter Teach-Konnektor-Schlüssel. Erzeuge in der App unter Profil -> KI-Konnektor einen neuen." },
@@ -96,7 +110,7 @@ Deno.serve(async (req: Request) => {
     // Protokoll mit `initialize`) bedient createMcpHandler standardmäßig mit
     // (`legacy: 'stateless'`).
     const handler = createMcpHandler(() => buildServer(userId));
-    return await handler.fetch(req);
+    return await handler.fetch(await withUrl(req, cleanedUrl));
   } catch (err) {
     console.error("teach-mcp:", err);
     return jsonResponse({ error: "Teach-Konnektor vorübergehend nicht verfügbar." }, 503);
@@ -112,10 +126,8 @@ interface ConnectorKeyRow {
 }
 
 /// Liefert die User-ID zum Schlüssel oder `null`, wenn er fehlt, falsch oder
-/// gesperrt ist. Akzeptiert `Authorization: Bearer tvk_…` (so steht es in der
-/// App-Anleitung), aus Toleranz auch ohne "Bearer " oder als `X-Teach-Key`.
-async function authenticate(req: Request): Promise<string | null> {
-  const key = extractKey(req);
+/// gesperrt ist.
+async function authenticate(key: string | null): Promise<string | null> {
   if (!key || !looksLikeConnectorKey(key)) return null;
 
   const keyHash = await hashConnectorKey(key);
@@ -141,13 +153,64 @@ async function authenticate(req: Request): Promise<string | null> {
   return row.user_id;
 }
 
-function extractKey(req: Request): string | null {
+/// Schlüssel aus den Headern: `X-Teach-Key` oder `Authorization: Bearer tvk_…`
+/// (aus Toleranz auch ohne "Bearer "). Nur ein `tvk_…`-Wert zählt, damit z.B.
+/// ein fremdes Bearer-Token eines Clients den Schlüssel aus der URL nicht
+/// verdrängt.
+function extractHeaderKey(req: Request): string | null {
   const explicit = req.headers.get("x-teach-key")?.trim();
-  if (explicit) return explicit;
+  if (explicit?.startsWith(CONNECTOR_KEY_PREFIX)) return explicit;
 
   const auth = req.headers.get("authorization")?.trim();
   if (!auth) return null;
-  return auth.toLowerCase().startsWith("bearer ") ? auth.slice("bearer ".length).trim() : auth;
+  const value = auth.toLowerCase().startsWith("bearer ") ? auth.slice("bearer ".length).trim() : auth;
+  return value.startsWith(CONNECTOR_KEY_PREFIX) ? value : null;
+}
+
+/// Löst einen Schlüssel aus der URL heraus -- als Pfad-Segment
+/// (`…/teach-mcp/tvk_…`, so steht der persönliche Claude-Link in der App)
+/// oder als `?key=tvk_…` -- und liefert die URL ohne ihn zurück.
+function splitKeyFromUrl(rawUrl: string): { key: string | null; cleanedUrl: string } {
+  const url = new URL(rawUrl);
+  let key: string | null = null;
+
+  const segments = url.pathname.split("/");
+  const keyIndex = segments.findIndex((segment) => segment.startsWith(CONNECTOR_KEY_PREFIX));
+  if (keyIndex !== -1) {
+    key = safeDecode(segments[keyIndex]);
+    segments.splice(keyIndex, 1);
+    url.pathname = segments.join("/") || "/";
+  }
+
+  const queryKey = url.searchParams.get("key")?.trim();
+  if (queryKey) {
+    key = key ?? queryKey;
+    url.searchParams.delete("key");
+  }
+
+  return { key, cleanedUrl: url.toString() };
+}
+
+/// Kopie des Requests mit anderer URL. Der Body wird gepuffert statt als
+/// Stream weitergereicht (MCP-Nachrichten sind klein), damit die Kopie in
+/// jeder Runtime ohne `duplex`-Sonderoption funktioniert.
+async function withUrl(req: Request, url: string): Promise<Request> {
+  if (url === req.url) return req;
+  const hasBody = req.method !== "GET" && req.method !== "HEAD";
+  return new Request(url, {
+    method: req.method,
+    headers: req.headers,
+    body: hasBody ? await req.arrayBuffer() : undefined,
+    signal: req.signal,
+  });
+}
+
+function safeDecode(value: string): string {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 // MARK: - Tools

@@ -30,10 +30,10 @@ Eine Session (`Core/StudyQueue.swift`) fragt nur **fällige und neue** Karten ab
 
 Claude kann über einen eigenen MCP-Konnektor (Edge Function `supabase/functions/teach-mcp`) direkt Ordner, Unterordner und Karteikarten in die eigene Teach-Bibliothek schreiben, z.B. „Mach mir 10 Karten zu Kapitel 3 in den Unterordner Sozialpsychologie“. Die App zeigt die neuen Karten beim nächsten Laden an (auch automatisch beim Zurückwechseln in die App).
 
-- **Einrichten**: In der App unter Profil → KI-Konnektor einen persönlichen Schlüssel erzeugen. In Claude unter Einstellungen → Konnektoren einen eigenen Konnektor mit der angezeigten URL anlegen und als Request-Header `Authorization: Bearer <Schlüssel>` eintragen. Im kostenlosen Claude-Abo ist ein eigener Konnektor möglich.
+- **Einrichten (einmalig)**: In der App unter Profil → KI-Konnektor den **persönlichen Claude-Link** erzeugen und kopieren (`…/functions/v1/teach-mcp/tvk_…`, der Schlüssel steckt im Link). In Claude unter Einstellungen → Konnektoren → „Eigenen Konnektor hinzufügen“ den Link als URL einfügen, sonst nichts. Danach reicht in jedem Chat „Schreib mir Karten zu X in Teach“. Im kostenlosen Claude-Abo ist ein eigener Konnektor möglich. Request-Header bietet Claude dort nur als Beta für einzelne Organisationen an, deshalb der Link; `Authorization: Bearer tvk_…` wird trotzdem weiter akzeptiert (z.B. für Claude Code).
 - **Was Claude darf**: Bibliothek und vorhandene Karten lesen, neue Ordner, Unterordner und Karten anlegen (höchstens 50 Karten pro Aufruf). Ändern oder Löschen geht bewusst nur in der App.
 - **Nur mit Konto**: Gast-Karten liegen ausschließlich auf dem iPhone, dort kommt der Konnektor nicht hin.
-- **Sicherheit**: Gespeichert wird nur ein Hash des Schlüssels (`connector_keys`, siehe `supabase/migrations/0012_connector_keys.sql`). Ein neuer Schlüssel ersetzt den alten, gesperrte Schlüssel wirken sofort. Für fremde Nutzer oder ChatGPT ist später OAuth statt Schlüssel vorgesehen.
+- **Sicherheit**: Gespeichert wird nur ein Hash des Schlüssels (`connector_keys`, siehe `supabase/migrations/0012_connector_keys.sql`). Der Link ist so geheim wie ein Passwort; die App merkt ihn sich nur im Keychain des iPhones. Ein neuer Link ersetzt den alten, gesperrte Links wirken sofort. Für fremde Nutzer oder ChatGPT ist später OAuth statt Schlüssel vorgesehen.
 
 ## Struktur
 
