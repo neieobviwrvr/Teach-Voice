@@ -1,7 +1,7 @@
 # Teach (Voice)
 
 iOS-App (SwiftUI) für sprachbasiertes Karteikarten-Lernen an der Uni:
-- **TTS**: Frage wird über `AVSpeechSynthesizer` (nativ, offline, kostenlos) vom Gerät vorgelesen.
+- **TTS**: Frage wird primär mit einer Google-Cloud-WaveNet-Stimme vorgelesen (Edge Function `text-to-speech`, mit hartem Ausgabendeckel). Ohne Netz oder bei Problemen springt `AVSpeechSynthesizer` ein (nativ, offline, kostenlos).
 - **STT**: Antwort wird per **Whisper-base** (lokal, on-device via [WhisperKit](https://github.com/argmaxinc/WhisperKit)/CoreML) transkribiert – kein Server-Roundtrip für die Spracherkennung.
 - **Backend**: [Supabase](https://supabase.com) (Postgres + Auth) – Ordner, Unterordner und Karteikarten sind je Nutzer isoliert (Row Level Security).
 
@@ -28,10 +28,19 @@ Einfaches 5-Stufen-Box-System (`Core/SpacedRepetition.swift`), Intervalle 0/1/3/
 
 Der Hands-free-Modus sortiert Karten nach Fälligkeit (fällige/überfällige zuerst, dann nie bewertete, dann noch nicht fällige) – ausschließlich Reihenfolge, keine Karte wird ausgeschlossen. Der Detail-Modus bleibt unsortiert (Original-Reihenfolge).
 
+## KI-Konnektor (Claude)
+
+Claude kann über einen eigenen MCP-Konnektor (Edge Function `supabase/functions/teach-mcp`) direkt Unterordner und Karteikarten in die eigenen Teach-Ordner schreiben, z.B. „Mach mir 10 Karten zu Kapitel 3 in den Unterordner Sozialpsychologie“. Die App zeigt die neuen Karten beim nächsten Laden an (auch automatisch beim Zurückwechseln in die App).
+
+- **Einrichten**: In der App unter Profil → KI-Konnektor einen persönlichen Schlüssel erzeugen. In Claude unter Einstellungen → Konnektoren einen eigenen Konnektor mit der angezeigten URL anlegen und als Request-Header `Authorization: Bearer <Schlüssel>` eintragen. Im kostenlosen Claude-Abo ist ein eigener Konnektor möglich.
+- **Was Claude darf**: Bibliothek und vorhandene Karten lesen, neue Unterordner und Karten anlegen. Ändern oder Löschen geht bewusst nur in der App.
+- **Nur mit Konto**: Gast-Karten liegen ausschließlich auf dem iPhone, dort kommt der Konnektor nicht hin.
+- **Sicherheit**: Gespeichert wird nur ein Hash des Schlüssels (`connector_keys`, siehe `supabase/migrations/0012_connector_keys.sql`). Ein neuer Schlüssel ersetzt den alten, gesperrte Schlüssel wirken sofort. Für fremde Nutzer oder ChatGPT ist später OAuth statt Schlüssel vorgesehen.
+
 ## Struktur
 
 - Ordner (Ober-Ordner, umbenennbar) → Unterordner (umbenennbar) → Karteikarten (Frage + Antwort, nachträglich bearbeitbar).
-- **Harte Limits für die Startphase** (ausdrücklich vorläufig, siehe `Models.swift`): max. **1 Ober-Ordner** pro Nutzer, **unbegrenzt viele Unterordner** pro Ober-Ordner, max. **25 Karteikarten** pro einzelnem Unterordner, und zusätzlich max. **50 Karteikarten pro Ober-Ordner insgesamt** (über alle seine Unterordner zusammengerechnet – seit 0007 die eigentliche Bremse, da die Unterordner-Anzahl selbst nicht mehr begrenzt ist). Jeweils per DB-Trigger (Cloud) und Repository-Check (Gastmodus) durchgesetzt, siehe `supabase/migrations/0003_tighter_limits.sql`, `0005_raise_flashcard_limit.sql` und `0007_unlimited_subfolders.sql`.
+- **Harte Limits für die Startphase** (ausdrücklich vorläufig, siehe `Models.swift`): max. **2 Ober-Ordner** pro Nutzer, **unbegrenzt viele Unterordner** pro Ober-Ordner, max. **25 Karteikarten** pro einzelnem Unterordner, und zusätzlich max. **50 Karteikarten pro Ober-Ordner insgesamt** (über alle seine Unterordner zusammengerechnet – seit 0007 die eigentliche Bremse, da die Unterordner-Anzahl selbst nicht mehr begrenzt ist). Jeweils per DB-Trigger (Cloud) und Repository-Check (Gastmodus) durchgesetzt, siehe `supabase/migrations/0003_tighter_limits.sql`, `0005_raise_flashcard_limit.sql` und `0007_unlimited_subfolders.sql`.
 - Auth: **E-Mail + Passwort** (Supabase) **oder Gastzugang** (rein lokal, kein Konto, kein Server-Roundtrip).
   Sign in with Apple/Google folgt später (siehe Task #9) – aktuell bewusst nicht eingebaut.
 

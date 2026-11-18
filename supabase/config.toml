@@ -1,0 +1,12 @@
+# Supabase-CLI-Konfiguration für Teach (Voice).
+#
+# Bewusst minimal: hier stehen nur Abweichungen vom Supabase-Standard. Alle
+# anderen Edge Functions behalten den Standard verify_jwt = true.
+
+project_id = "rvpisoibtqxxxpgjdhff"
+
+# Der Claude-Konnektor meldet sich mit einem eigenen Schlüssel (tvk_…) an,
+# nicht mit einem Supabase-JWT. Mit verify_jwt = true würde das Gateway jede
+# Anfrage ablehnen, bevor teach-mcp den Schlüssel selbst prüfen kann.
+[functions.teach-mcp]
+verify_jwt = false

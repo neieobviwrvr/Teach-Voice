@@ -30,6 +30,26 @@ struct ProfileView: View {
                     }
                 }
 
+                // Claude-Konnektor: nur mit Konto, weil Gast-Karten
+                // ausschließlich auf dem Gerät liegen und der Konnektor
+                // (supabase/functions/teach-mcp) nur in Supabase schreiben kann.
+                Section {
+                    if mode == .cloud {
+                        NavigationLink {
+                            ConnectorView()
+                        } label: {
+                            Label("KI-Konnektor (Claude)", systemImage: "sparkles")
+                        }
+                    } else {
+                        Label("KI-Konnektor (Claude)", systemImage: "sparkles")
+                            .foregroundStyle(.secondary)
+                    }
+                } footer: {
+                    if mode == .guest {
+                        Text("Nur mit Konto verfügbar: Im Gastmodus liegen deine Karten nur auf diesem iPhone, dort kann Claude nicht hineinschreiben.")
+                    }
+                }
+
                 Section {
                     Button(mode == .guest ? "Gastmodus verlassen" : "Abmelden", role: .destructive) {
                         auth.leaveCurrentSession()

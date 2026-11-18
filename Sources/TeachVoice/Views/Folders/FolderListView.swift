@@ -12,6 +12,7 @@ struct FolderListView: View {
     let mode: LibraryMode
 
     @EnvironmentObject private var library: LibraryStore
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var showAddFolder = false
     @State private var newFolderName = ""
@@ -144,6 +145,20 @@ struct FolderListView: View {
                     await library.loadSubfolders(for: selectedFolder)
                 }
             }
+            // Was Claude über den KI-Konnektor angelegt hat, beim Zurück-
+            // wechseln in die App sofort zeigen. Nicht während einer
+            // Hands-free-Session, die ihre Auswahl beim Start mitbekommt.
+            .onChange(of: scenePhase) { _, phase in
+                guard phase == .active, voiceOnlySubfolders == nil, eigenbewertungCards == nil else { return }
+                Task { await reloadAfterReturningToApp() }
+            }
+    }
+
+    private func reloadAfterReturningToApp() async {
+        await library.loadFolders()
+        if let selectedFolder {
+            await library.loadSubfolders(for: selectedFolder)
+        }
     }
 
     @ViewBuilder

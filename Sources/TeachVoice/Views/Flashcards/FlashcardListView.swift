@@ -4,6 +4,7 @@ struct FlashcardListView: View {
     let subfolder: Subfolder
 
     @EnvironmentObject private var library: LibraryStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showAddCard = false
     @State private var editingCard: Flashcard?
     @State private var showStrictnessPicker = false
@@ -94,6 +95,13 @@ struct FlashcardListView: View {
         }
         .task { await library.loadFlashcards(for: subfolder) }
         .refreshable { await library.loadFlashcards(for: subfolder) }
+        // Karten, die Claude über den KI-Konnektor angelegt hat, sofort
+        // zeigen, wenn man in die App zurückwechselt. Nicht während einer
+        // laufenden Lernsession, die ihre Karten beim Start mitbekommt.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active, pendingStrictness == nil else { return }
+            Task { await library.loadFlashcards(for: subfolder) }
+        }
         .sheet(isPresented: $showAddCard) {
             AddFlashcardSheet { question, answer in
                 await library.addFlashcard(question: question, answer: answer, to: subfolder)

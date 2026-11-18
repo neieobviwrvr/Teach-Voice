@@ -4,6 +4,7 @@ struct SubfolderListView: View {
     let folder: Folder
 
     @EnvironmentObject private var library: LibraryStore
+    @Environment(\.scenePhase) private var scenePhase
 
     @State private var showAddSubfolder = false
     @State private var newSubfolderName = ""
@@ -101,6 +102,12 @@ struct SubfolderListView: View {
         .navigationTitle(folder.name)
         .task { await library.loadSubfolders(for: folder) }
         .refreshable { await library.loadSubfolders(for: folder) }
+        // Unterordner, die Claude über den KI-Konnektor angelegt hat, sofort
+        // zeigen, wenn man in die App zurückwechselt.
+        .onChange(of: scenePhase) { _, phase in
+            guard phase == .active else { return }
+            Task { await library.loadSubfolders(for: folder) }
+        }
         .alert("Neuer Unterordner", isPresented: $showAddSubfolder) {
             TextField("Name", text: $newSubfolderName)
             Button("Abbrechen", role: .cancel) { newSubfolderName = "" }
