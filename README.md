@@ -16,9 +16,11 @@ Beide Modi enden mit einem **Statistik-Screen** (`Views/Study/SessionSummaryView
 
 ## Bewertung im Sprach-Modus (Zielnote)
 
-Die KI (`grade-answer`) zerlegt die Musterantwort in Kernthemen und prüft jedes **sinngemäß** – andere Worte, umgangssprachlich statt Fachbegriff und Erkennungsfehler von Whisper zählen trotzdem. Heraus kommt, wie viel Prozent der Kernthemen getroffen wurden.
+Jede Karte hat **Kontrollpunkte**: die Aussagen, die eine vollständig richtige Antwort enthalten muss. Karten, die Claude über den Konnektor anlegt, bringen sie **verpflichtend** mit (Claude legt sie beim Schreiben fest, ohne Überschneidungen). Nur bei selbst geschriebenen oder per PDF importierten Karten leitet GPT sie einmalig selbst ab.
 
-Die **Zielnote** (Profil → „Bewertung im Sprach-Modus“, `Core/Zielnote.swift`, Standard 2,3) legt fest, ab wie viel Prozent eine Antwort als richtig gilt: linear 15 Prozentpunkte pro Notenstufe (1,0 → 95 %, 2,0 → 80 %, 3,0 → 65 %, 4,0 → 50 %), „teilweise“ jeweils 20 Punkte darunter. Sie steuert den hervorgehobenen KI-Vorschlag und ob die Kurzlösung vorgelesen wird. Wie großzügig die Kernthemen erkannt werden, ändert sie nicht.
+Die KI (`grade-answer`) prüft **jeden Kontrollpunkt einzeln** – getroffen, teilweise oder fehlt – und muss dafür eine Stelle aus der gesprochenen Antwort zitieren. Sinngemäß reicht: andere Worte, umgangssprachlich statt Fachbegriff und Erkennungsfehler von Whisper zählen trotzdem, und eine Aussage kann mehrere Punkte erfüllen. Die Prozentzahl rechnet der Server aus den Einzelurteilen aus (teilweise = halber Punkt), und die App zeigt die Punkte als Checkliste. Die Kurzlösung nennt nur, was gefehlt hat.
+
+Die **Zielnote** (Profil → „Bewertung im Sprach-Modus“, `Core/Zielnote.swift`, Standard 2,3) legt fest, ab wie viel Prozent eine Antwort als richtig gilt: linear 15 Prozentpunkte pro Notenstufe (1,0 → 95 %, 2,0 → 80 %, 3,0 → 65 %, 4,0 → 50 %), „teilweise“ jeweils 20 Punkte darunter. Sie steuert den hervorgehobenen KI-Vorschlag und ob die Kurzlösung vorgelesen wird. Wie großzügig die Kontrollpunkte erkannt werden, ändert sie nicht.
 
 ## Spaced Repetition
 

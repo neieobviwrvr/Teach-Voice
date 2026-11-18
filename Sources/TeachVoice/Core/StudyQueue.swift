@@ -37,6 +37,12 @@ struct StudyQueue {
     var current: Flashcard? { pending.first }
     var isFinished: Bool { pending.isEmpty }
 
+    /// Die aktuelle und die nächsten Karten, insgesamt höchstens `count`
+    /// (z.B. um ihre Fragen schon vorab als Audio zu laden).
+    func upcoming(_ count: Int) -> [Flashcard] {
+        Array(pending.prefix(max(0, count)))
+    }
+
     /// Ist die aktuelle Karte eine Wiederholung (war in dieser Session schon dran)?
     var currentIsRepetition: Bool {
         guard let current else { return false }

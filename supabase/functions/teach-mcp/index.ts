@@ -41,6 +41,14 @@ import { z } from "npm:zod@^4.3.6";
 import { CONNECTOR_KEY_PREFIX, hashConnectorKey, looksLikeConnectorKey } from "../_shared/connectorKey.ts";
 import { checkRateLimit } from "../_shared/rateLimit.ts";
 import { serviceRest } from "../_shared/serviceRest.ts";
+import { answerHash } from "../_shared/answerHash.ts";
+
+// Kontrollpunkte pro Karte (Pflichtangabe in add_flashcards, siehe
+// CARD_STYLE_GUIDE): sie sind die Bewertungsgrundlage in grade-answer.
+// Empfohlen 1-6; die harte Grenze liegt etwas höher, damit Claude nicht an
+// einer knappen Zählung scheitert.
+const MAX_KONTROLLPUNKTE = 8;
+const MAX_KONTROLLPUNKT_LENGTH = 300;
 
 // Keine Mengen-Limits für Ordner/Unterordner/Karten mehr (Simons Entscheidung
 // fürs MVP, siehe 0013_remove_limits.sql). Nur die Anzahl Karten PRO AUFRUF
@@ -63,9 +71,11 @@ const RATE_LIMIT_MAX_PER_HOUR = 200;
 // `last_used_at` nur alle paar Minuten schreiben statt bei jeder Anfrage.
 const LAST_USED_UPDATE_INTERVAL_MS = 5 * 60 * 1000;
 
-const SERVER_INSTRUCTIONS = `Teach (Voice) ist eine Karteikarten-App fürs Lernen per Sprache: Die App liest die Frage vor, der Nutzer antwortet laut, und eine KI bewertet die Antwort danach, wie viele Kernpunkte der Musterantwort genannt wurden.
+const SERVER_INSTRUCTIONS = `Teach (Voice) ist eine Karteikarten-App fürs Lernen per Sprache: Die App liest die Frage vor, der Nutzer antwortet laut, und eine KI prüft die Antwort Punkt für Punkt gegen die Kontrollpunkte der Karte.
 
-Struktur: Ordner (z.B. ein Fach) -> Unterordner (z.B. ein Thema oder Kapitel) -> Karteikarten (Frage + Musterantwort). Es gibt keine Mengen-Limits.
+Struktur: Ordner (z.B. ein Fach) -> Unterordner (z.B. ein Thema oder Kapitel) -> Karteikarten (Frage + Musterantwort + Kontrollpunkte). Es gibt keine Mengen-Limits.
+
+Die Kontrollpunkte legst DU beim Anlegen fest. Sie sind die einzige Bewertungsgrundlage -- eine Karte ist nur so fair bewertbar wie ihre Kontrollpunkte. Halte dich deshalb genau an die Regeln in add_flashcards.
 
 Ablauf:
 1. list_library aufrufen, um Ordner, Unterordner und IDs zu sehen.
@@ -76,10 +86,21 @@ Ablauf:
 Der Konnektor kann keine bestehenden Karten ändern oder löschen. Das geht nur in der App.`;
 
 const CARD_STYLE_GUIDE = `So entstehen gute Karten für Teach:
-- Frage: eine klare, eigenständige Frage, die sich gut vorlesen lässt (keine Tabellen, keine Formelnotation, Abkürzungen ausschreiben).
-- Musterantwort: prägnante Kernpunkte statt Fließtext, meist 1-3 Sätze oder bis zu 5 Aufzählungspunkte. Jeder Punkt sollte eine einzelne, prüfbare Aussage sein, denn bewertet wird, wie viele davon der Nutzer nennt.
-- Formatierung: nur **fett** und Zeilen, die mit "- " beginnen (Aufzählung). Keine Überschriften, Nummerierungen, Links oder Tabellen.
-- Sprache: die Sprache des Nutzers, normalerweise Deutsch.`;
+- Frage: eine klare, eigenständige Frage, die sich gut vorlesen lässt (keine Tabellen, keine Formelnotation, Abkürzungen ausschreiben). Sie muss erkennen lassen, wie viel erwartet wird (z.B. "Nenne zwei Grenzen ..." statt nur "Grenzen?").
+- Musterantwort: prägnant statt Fließtext, meist 1-3 Sätze oder bis zu 5 Aufzählungspunkte. Sie wird nach der Abfrage angezeigt.
+- Formatierung der Musterantwort: nur **fett** und Zeilen, die mit "- " beginnen. Keine Überschriften, Nummerierungen, Links oder Tabellen.
+- Sprache: die Sprache des Nutzers, normalerweise Deutsch.
+
+KONTROLLPUNKTE (Pflicht, die Bewertungsgrundlage): Die Aussagen, die eine mündliche Antwort enthalten muss, um vollständig richtig zu sein. Die KI prüft jede gesprochene Antwort Punkt für Punkt (getroffen / teilweise / fehlt) und rechnet daraus die Note. Regeln:
+1. Jeder Punkt ist EINE eigenständige Aussage, die man unabhängig von den anderen wissen oder nicht wissen kann.
+2. KEINE ÜBERSCHNEIDUNGEN: Wer Punkt A sinngemäß nennt, darf damit nicht automatisch auch Punkt B abdecken. Was im Kern dasselbe meint, ist EIN Punkt.
+3. Meist 1-4 Punkte, höchstens 6. Eine kurze Definition oder ein einzelnes Faktum ist oft nur 1 Punkt.
+4. Nur Wesentliches: Beispiele, Präzisierungen und Nebendetails gehören zum Punkt, den sie erläutern -- außer die Frage verlangt sie ausdrücklich.
+5. Jeder Punkt steht inhaltlich auch in der Musterantwort und ist kurz formuliert (höchstens ~15 Wörter, reiner Text ohne "**" oder "- ").
+
+Beispiel: Frage "Wo liegen die Grenzen des Behaviorismus?"
+SCHLECHT (überschneidend): ["ignoriert innere Prozesse", "lehnt Begriffe für Unsichtbares ab", "erklärt nicht, was beim Lernen im Inneren passiert", "wissenschaftlich unfruchtbar"]
+GUT: ["blendet innere, nicht beobachtbare Vorgänge wie Gedanken und Gefühle aus", "gilt als wissenschaftlich unfruchtbar, weil andere Wissenschaften auch mit nicht beobachtbaren Begriffen arbeiten"]`;
 
 Deno.serve(async (req: Request) => {
   // Kein CORS: Claude ruft den Konnektor serverseitig aus der Anthropic-Cloud
@@ -230,6 +251,13 @@ interface CardRow {
   subfolder_id: string;
   question: string;
   answer: string;
+  kernelemente: string[] | null;
+}
+
+interface NewCard {
+  question: string;
+  answer: string;
+  kontrollpunkte: string[];
 }
 
 type ToolResult = {
@@ -315,7 +343,7 @@ function buildServer(userId: string): McpServer {
     {
       title: "Karteikarten eines Unterordners anzeigen",
       description:
-        "Zeigt alle Fragen und Musterantworten eines Unterordners. Vor dem Ergänzen eines bestehenden Unterordners aufrufen, um Doppelungen zu vermeiden.",
+        "Zeigt alle Fragen, Musterantworten und Kontrollpunkte eines Unterordners. Vor dem Ergänzen eines bestehenden Unterordners aufrufen, um Doppelungen zu vermeiden.",
       inputSchema: z.object({
         subfolder_id: z.uuid().describe("ID des Unterordners aus list_library"),
       }),
@@ -328,7 +356,14 @@ function buildServer(userId: string): McpServer {
       const cards = await cardsIn(userId, subfolder_id);
       return textResult({
         unterordner: subfolder.name,
-        karten: cards.map((c, i) => ({ nr: i + 1, frage: c.question, antwort: c.answer })),
+        karten: cards.map((c, i) => ({
+          nr: i + 1,
+          frage: c.question,
+          antwort: c.answer,
+          // null = noch keine festgelegten Kontrollpunkte (z.B. in der App
+          // selbst geschrieben); die Bewertung leitet sie dann selbst ab.
+          kontrollpunkte: Array.isArray(c.kernelemente) ? c.kernelemente : null,
+        })),
       });
     })
   );
@@ -422,7 +457,14 @@ function buildServer(userId: string): McpServer {
           .array(
             z.object({
               question: z.string().trim().min(1).max(MAX_QUESTION_LENGTH).describe("Die Frage, die die App vorliest"),
-              answer: z.string().trim().min(1).max(MAX_ANSWER_LENGTH).describe("Die Musterantwort als Kernpunkte"),
+              answer: z.string().trim().min(1).max(MAX_ANSWER_LENGTH).describe("Die Musterantwort, wird nach der Abfrage angezeigt"),
+              kontrollpunkte: z
+                .array(z.string().trim().min(2).max(MAX_KONTROLLPUNKT_LENGTH))
+                .min(1)
+                .max(MAX_KONTROLLPUNKTE)
+                .describe(
+                  "PFLICHT: 1-6 eigenständige, sich nicht überschneidende Aussagen, die eine vollständig richtige Antwort enthalten muss. Einzige Bewertungsgrundlage, siehe Regeln in der Tool-Beschreibung."
+                ),
             })
           )
           .min(1)
@@ -430,18 +472,29 @@ function buildServer(userId: string): McpServer {
       }),
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     },
-    safe(async ({ subfolder_id, cards }: { subfolder_id: string; cards: { question: string; answer: string }[] }) => {
+    safe(async ({ subfolder_id, cards }: { subfolder_id: string; cards: NewCard[] }) => {
       const subfolder = await ownedSubfolder(userId, subfolder_id);
       if (!subfolder) return errorResult("Unterordner nicht gefunden. Rufe list_library auf, um die gültigen IDs zu sehen.");
+
+      // Kontrollpunkte säubern: Formatierung entfernen, leere und doppelte
+      // raus. Bleibt bei einer Karte keiner übrig, wird NICHTS angelegt --
+      // eine Karte ohne Bewertungsgrundlage soll gar nicht erst entstehen.
+      const prepared = cards.map((card) => ({ ...card, kontrollpunkte: cleanKontrollpunkte(card.kontrollpunkte) }));
+      const ohnePunkte = prepared.filter((card) => card.kontrollpunkte.length === 0);
+      if (ohnePunkte.length > 0) {
+        return errorResult(
+          `Nichts angelegt: ${ohnePunkte.length} Karte(n) haben keine gültigen Kontrollpunkte (z.B. "${ohnePunkte[0].question}"). Jede Karte braucht 1-6 eigenständige Kontrollpunkte.`
+        );
+      }
 
       const existingCards = await cardsIn(userId, subfolder_id);
 
       // Doppelte Fragen überspringen: gegen den Bestand UND innerhalb des
       // Aufrufs. Schützt vor Duplikaten, wenn Claude einen Aufruf wiederholt.
       const seen = new Set(existingCards.map((c) => normalize(c.question)));
-      const toInsert: { question: string; answer: string }[] = [];
+      const toInsert: NewCard[] = [];
       const skipped: string[] = [];
-      for (const card of cards) {
+      for (const card of prepared) {
         const key = normalize(card.question);
         if (seen.has(key)) {
           skipped.push(card.question);
@@ -459,16 +512,22 @@ function buildServer(userId: string): McpServer {
       // Bulk-Inserts hätten sonst denselben Zeitstempel (now() = Beginn der
       // Transaktion) und damit keine feste Reihenfolge -- deshalb pro Karte
       // 1 ms Abstand. `position` bleibt 0 wie bei Karten aus der App.
-      // `kernelemente`/`srs_*` bleiben leer: der Bewertungs-Cache füllt sich
-      // beim ersten Lernen von selbst.
+      // Die Kontrollpunkte landen direkt im Bewertungs-Cache der Karte
+      // (`kernelemente` + Hash der Antwort, passend zu Core/TextHash.swift):
+      // die App schickt sie bei jeder Bewertung mit, grade-answer muss nichts
+      // mehr extrahieren. `srs_*` bleiben leer (Karte gilt als neu).
       const base = Date.now();
-      const rows = toInsert.map((card, i) => ({
-        subfolder_id,
-        user_id: userId,
-        question: card.question,
-        answer: card.answer,
-        created_at: new Date(base + i).toISOString(),
-      }));
+      const rows = await Promise.all(
+        toInsert.map(async (card, i) => ({
+          subfolder_id,
+          user_id: userId,
+          question: card.question,
+          answer: card.answer,
+          kernelemente: card.kontrollpunkte,
+          kernelemente_source_hash: await answerHash(card.answer),
+          created_at: new Date(base + i).toISOString(),
+        }))
+      );
 
       // Der Insert ist atomar: schlägt er fehl, ist gar nichts gespeichert
       // (`safe` meldet das dann lesbar an Claude).
@@ -498,12 +557,27 @@ async function ownedSubfolder(userId: string, subfolderId: string): Promise<Subf
 
 async function cardsIn(userId: string, subfolderId: string): Promise<CardRow[]> {
   return await serviceRest<CardRow[]>(
-    `flashcards?subfolder_id=eq.${subfolderId}&user_id=eq.${userId}&select=subfolder_id,question,answer&order=position.asc,created_at.asc`
+    `flashcards?subfolder_id=eq.${subfolderId}&user_id=eq.${userId}&select=subfolder_id,question,answer,kernelemente&order=position.asc,created_at.asc`
   );
 }
 
 function normalize(text: string): string {
   return text.trim().replace(/\s+/g, " ").toLowerCase();
+}
+
+/// Formatierung ("**", führendes "- ") entfernen, leere und doppelte Punkte
+/// raus, auf MAX_KONTROLLPUNKTE begrenzen.
+function cleanKontrollpunkte(points: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of points) {
+    const text = raw.replace(/\*\*/g, "").replace(/^\s*-\s*/, "").trim();
+    const key = normalize(text);
+    if (text.length < 2 || seen.has(key)) continue;
+    seen.add(key);
+    result.push(text);
+  }
+  return result.slice(0, MAX_KONTROLLPUNKTE);
 }
 
 function jsonResponse(body: unknown, status: number): Response {

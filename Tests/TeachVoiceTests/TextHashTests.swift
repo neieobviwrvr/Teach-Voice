@@ -24,6 +24,16 @@ final class TextHashTests: XCTestCase {
         XCTAssertNotEqual(TextHash.sha256("Musterantwort Version 1"), TextHash.sha256("Musterantwort Version 2"))
     }
 
+    func testMatchesServerSideAnswerHash() {
+        // Fester Prüfwert (SHA-256 der getrimmten UTF-8-Antwort, berechnet
+        // unabhängig mit Python). Der Konnektor speichert die von Claude
+        // gelieferten Kontrollpunkte unter genau diesem Hash
+        // (supabase/functions/_shared/answerHash.ts) -- weicht die App davon
+        // ab, würden die Punkte ignoriert und neu extrahiert.
+        let answer = "  - blendet innere Vorg\u{00E4}nge aus\n- wissenschaftlich unfruchtbar  \n"
+        XCTAssertEqual(TextHash.sha256(answer), "5e2e5d4658d533101e262a914a78f8f421eb65eac58b4e7a77c14dee6b48166b")
+    }
+
     func testHashIsLowercaseHex() {
         let hash = TextHash.sha256("Test")
         XCTAssertEqual(hash.count, 64)

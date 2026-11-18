@@ -76,6 +76,18 @@ final class StudyQueueTests: XCTestCase {
         XCTAssertEqual(queue.cardCount, 1)
     }
 
+    func testUpcomingReturnsCurrentAndNextCardsInOrder() {
+        let a = makeCard()
+        let b = makeCard()
+        let c = makeCard()
+        let queue = StudyQueue(cards: [a, b, c])
+
+        XCTAssertEqual(queue.upcoming(2).map(\.id), [a.id, b.id])
+        XCTAssertEqual(queue.upcoming(10).map(\.id), [a.id, b.id, c.id], "Mehr als vorhanden darf nicht crashen.")
+        XCTAssertTrue(queue.upcoming(0).isEmpty)
+        XCTAssertTrue(queue.upcoming(-1).isEmpty)
+    }
+
     func testRecordOnEmptyQueueDoesNothing() {
         var queue = StudyQueue(cards: [])
         XCTAssertNil(queue.record(.richtig))

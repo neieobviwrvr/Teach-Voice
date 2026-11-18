@@ -36,6 +36,12 @@ final class WhisperTranscriber: ObservableObject {
             guard let self else { return }
             self.state = .downloading(progress: 0)
             do {
+                // Der (nonisolated, async) WhisperKit-Init läuft trotz des
+                // Aufrufs vom Main Actor auf dem globalen Executor, blockiert
+                // die App also nicht. Er kann beim ersten Start aber lange
+                // dauern (Download + CoreML-Kompilierung) -- deshalb wartet
+                // VoiceStudyView in seiner Vorbereitungsphase darauf, statt
+                // mit halb geladener Spracherkennung loszulegen.
                 let config = WhisperKitConfig(model: "base")
                 self.whisperKit = try await WhisperKit(config)
                 self.state = .ready

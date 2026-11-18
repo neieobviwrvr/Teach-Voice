@@ -37,16 +37,30 @@ struct VoiceStudyView: View {
 
     @State private var queue: StudyQueue
     @State private var zielnote = Zielnote.gespeichert
-    @State private var phase: Phase = .bereit
+    @State private var phase: Phase = .vorbereiten
+    /// Gesetzt, wenn die Vorbereitung (Mikrofon, Spracherkennung) scheitert.
+    @State private var preparationError: String?
     @State private var feedback: Feedback?
     @State private var assessmentContinuation: CheckedContinuation<GradingResult.Urteil, Never>?
     /// Der Task, der `runLoop()` antreibt. `startLoop()` bricht einen alten
     /// immer zuerst ab, damit nie zwei Schleifen denselben Recorder teilen.
     @State private var loopTask: Task<Void, Never>?
 
+    /// `vorbereiten`: Bevor die erste Frage kommt, ist alles bereit --
+    /// Mikrofonzugriff geklärt, Spracherkennung geladen, Stimme für die
+    /// ersten Fragen vorgeladen. Vorher startete der Ablauf sofort, und wer
+    /// direkt nach dem App-Start lernte, bekam Stille, eine nicht
+    /// verarbeitete Antwort und danach mehrere Ansagen auf einmal.
     private enum Phase {
-        case bereit, vorlesen, zuhoeren, transkribieren, bewerten, selbstbewertung, fertig
+        case vorbereiten, vorlesen, zuhoeren, transkribieren, bewerten, selbstbewertung, fertig
     }
+
+    /// Wie viele kommende Fragen vor dem Start bzw. während des Antwortens
+    /// schon als Audio vorgeladen werden.
+    private static let vorladenAnzahl = 2
+    /// Länger als so wartet die Vorbereitung nicht auf das Vorladen der
+    /// Stimme (langsames Netz) -- dann wird die erste Frage eben normal geladen.
+    private static let maxVorladeWartezeit: Double = 6
 
     /// Was nach einer Antwort angezeigt wird.
     private struct Feedback {
@@ -70,7 +84,11 @@ struct VoiceStudyView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
-                if queue.isFinished {
+                if let preparationError {
+                    preparationFailedView(preparationError)
+                } else if phase == .vorbereiten {
+                    preparationView
+                } else if queue.isFinished {
                     SessionSummaryView(
                         queue: queue,
                         onRepeatAll: { restartWithAllCards() },
@@ -90,7 +108,6 @@ struct VoiceStudyView: View {
         }
         .navigationTitle(request.title)
         .navigationBarTitleDisplayMode(.inline)
-        .task { await transcriber.prepareIfNeeded() }
         .task { startLoop() }
         .onDisappear { stopEverything() }
         .alert("Mikrofonzugriff benötigt", isPresented: $recorder.permissionDenied) {
@@ -102,6 +119,54 @@ struct VoiceStudyView: View {
     }
 
     // MARK: - Ansicht
+
+    private var preparationView: some View {
+        VStack(spacing: 16) {
+            ProgressView()
+                .controlSize(.large)
+            Text(preparationStatusText)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+            Text("Beim allerersten Start lädt die App einmalig die Spracherkennung herunter. Das kann bis zu einer Minute dauern, danach geht es in Sekunden.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button("Abbrechen", role: .cancel) { stopEverythingAndClose() }
+                .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 40)
+        .frame(maxWidth: .infinity)
+    }
+
+    private var preparationStatusText: String {
+        switch transcriber.state {
+        case .ready, .transcribing:
+            return "Stimme wird vorbereitet…"
+        default:
+            return "Spracherkennung wird geladen…"
+        }
+    }
+
+    private func preparationFailedView(_ message: String) -> some View {
+        VStack(spacing: 16) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 40))
+                .foregroundStyle(.orange)
+            Text(message)
+                .multilineTextAlignment(.center)
+            Button {
+                preparationError = nil
+                startLoop()
+            } label: {
+                Text("Erneut versuchen").frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            Button("Zurück") { stopEverythingAndClose() }
+                .buttonStyle(.bordered)
+        }
+        .padding(.vertical, 40)
+        .frame(maxWidth: .infinity)
+    }
 
     private func questionHeader(_ card: Flashcard) -> some View {
         VStack(spacing: 12) {
@@ -122,7 +187,7 @@ struct VoiceStudyView: View {
     @ViewBuilder
     private var statusArea: some View {
         switch phase {
-        case .bereit, .vorlesen:
+        case .vorbereiten, .vorlesen:
             Label("Frage wird vorgelesen…", systemImage: "speaker.wave.2")
                 .foregroundStyle(.secondary)
         case .zuhoeren:
@@ -166,7 +231,7 @@ struct VoiceStudyView: View {
             if let result = feedback.result, let vorschlag {
                 // Als String gebaut (nicht als LocalizedStringKey-Literal),
                 // damit das "%" nie als Format-Platzhalter gelesen wird.
-                let info = "\(Int(result.deckungProzent.rounded())) % der Kernthemen getroffen · KI-Vorschlag bei Zielnote \(zielnote.anzeige): \(vorschlag.label)"
+                let info = "\(Int(result.deckungProzent.rounded())) % der Kontrollpunkte getroffen · KI-Vorschlag bei Zielnote \(zielnote.anzeige): \(vorschlag.label)"
                 Text(info)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -189,7 +254,10 @@ struct VoiceStudyView: View {
                 }
             }
 
-            if let fehlend = feedback.result?.fehlendeElemente, !fehlend.isEmpty {
+            if let punkte = feedback.result?.punkte, !punkte.isEmpty {
+                kontrollpunkteListe(punkte)
+            } else if let fehlend = feedback.result?.fehlendeElemente, !fehlend.isEmpty {
+                // Ältere Server-Version ohne Einzelurteile.
                 VStack(alignment: .leading, spacing: 4) {
                     Text("Gefehlt hat").font(.caption.bold()).foregroundStyle(.secondary)
                     ForEach(fehlend, id: \.self) { element in
@@ -233,6 +301,25 @@ struct VoiceStudyView: View {
         .background(.quaternary, in: RoundedRectangle(cornerRadius: 12))
     }
 
+    /// Checkliste aller Kontrollpunkte mit dem Einzelurteil der KI -- so ist
+    /// nachvollziehbar, woher die Prozentzahl kommt.
+    private func kontrollpunkteListe(_ punkte: [GradingResult.Punkt]) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Kontrollpunkte").font(.caption.bold()).foregroundStyle(.secondary)
+            ForEach(Array(punkte.enumerated()), id: \.offset) { _, punkt in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Image(systemName: punkt.status.symbol)
+                        .foregroundStyle(punkt.status.color)
+                    Text(punkt.text)
+                        .font(.caption)
+                        .foregroundStyle(punkt.status == .getroffen ? Color.secondary : Color.primary)
+                }
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel("\(punkt.status.accessibilityText): \(punkt.text)")
+            }
+        }
+    }
+
     /// Der von der KI vorgeschlagene Button ist gefüllt, die anderen nur
     /// umrandet – ein Tap auf irgendeinen zählt.
     @ViewBuilder
@@ -255,14 +342,23 @@ struct VoiceStudyView: View {
     // MARK: - Ablauf
 
     private func runLoop() async {
+        guard await prepare(), !Task.isCancelled else { return }
+
         while !Task.isCancelled, let card = queue.current {
             feedback = nil
             phase = .vorlesen
-            await speech.speakAndWait(FlashcardMarkdown.plainText(from: card.question))
+            await speech.speakAndWait(spokenQuestion(card))
             if Task.isCancelled { return }
             await soundPlayer.play(.ready)
             if Task.isCancelled { return }
 
+            // Während der User antwortet, schon die nächsten Fragen als
+            // Audio holen -- dann startet die nächste Ansage ohne Pause.
+            let upcoming = queue.upcoming(Self.vorladenAnzahl + 1).dropFirst().map(spokenQuestion)
+            Task { await speech.prefetch(Array(upcoming)) }
+
+            // Sicherheitsnetz: nie aufnehmen, solange noch etwas vorgelesen wird.
+            speech.stop()
             phase = .zuhoeren
             let url = await recorder.recordUntilSilence(silenceTimeout: Self.denkpause, maxDuration: Self.maxAufnahme)
             if Task.isCancelled || recorder.permissionDenied { return }
@@ -301,6 +397,56 @@ struct VoiceStudyView: View {
             phase = .fertig
             await speech.speakAndWait(summarySentence())
         }
+    }
+
+    /// Macht vor der ersten Frage alles startklar und zeigt solange die
+    /// Vorbereitungs-Ansicht: Mikrofonzugriff klären, Spracherkennung laden
+    /// (beim ersten App-Start inkl. Download), die ersten Fragen als Audio
+    /// vorladen. Liefert `false`, wenn es ohne Mikrofon oder Spracherkennung
+    /// nicht weitergeht (`preparationError` erklärt dann warum).
+    private func prepare() async -> Bool {
+        phase = .vorbereiten
+        preparationError = nil
+
+        // Stimme parallel vorladen, während Mikrofon und Whisper geklärt werden.
+        let firstQuestions = queue.upcoming(Self.vorladenAnzahl).map(spokenQuestion)
+        let prefetchTask = Task { await speech.prefetch(firstQuestions) }
+
+        guard await recorder.requestPermission() else {
+            prefetchTask.cancel()
+            recorder.permissionDenied = true
+            preparationError = "Ohne Mikrofonzugriff kann der Sprach-Modus deine Antwort nicht hören. Erlaube den Zugriff in den Einstellungen oder lerne im Tipp-Modus."
+            return false
+        }
+        if Task.isCancelled { return false }
+
+        await transcriber.prepareIfNeeded()
+        if Task.isCancelled { return false }
+        if case .failed = transcriber.state {
+            prefetchTask.cancel()
+            preparationError = "Die Spracherkennung konnte nicht geladen werden. Prüfe deine Internetverbindung (nur beim ersten Mal nötig) und versuche es erneut."
+            return false
+        }
+
+        await waitAtMost(Self.maxVorladeWartezeit, for: prefetchTask)
+        return !Task.isCancelled
+    }
+
+    /// Wartet auf `task`, aber höchstens `seconds` Sekunden. Der Task selbst
+    /// läuft danach im Hintergrund weiter.
+    private func waitAtMost(_ seconds: Double, for task: Task<Void, Never>) async {
+        await withTaskGroup(of: Void.self) { group in
+            group.addTask { await task.value }
+            group.addTask { try? await Task.sleep(nanoseconds: UInt64(seconds * 1_000_000_000)) }
+            await group.next()
+            group.cancelAll()
+        }
+    }
+
+    /// Genau der Text, der vorgelesen wird -- muss für Vorladen und Ansage
+    /// identisch sein, sonst greift der Audio-Cache nicht.
+    private func spokenQuestion(_ card: Flashcard) -> String {
+        FlashcardMarkdown.plainText(from: card.question)
     }
 
     private func grade(card: Flashcard, transcript: String) async -> Feedback {
@@ -403,8 +549,34 @@ struct VoiceStudyView: View {
         let fresh = request.allCards.compactMap { library.currentVersion(of: $0) }
         queue = StudyQueue(cards: SpacedRepetition.ordered(fresh))
         feedback = nil
-        phase = .bereit
+        phase = .vorbereiten
         startLoop()
+    }
+}
+
+extension GradingResult.Punkt.Status {
+    var symbol: String {
+        switch self {
+        case .getroffen: return "checkmark.circle.fill"
+        case .teilweise: return "circle.lefthalf.filled"
+        case .fehlt: return "xmark.circle"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .getroffen: return .green
+        case .teilweise: return .orange
+        case .fehlt: return .red
+        }
+    }
+
+    var accessibilityText: String {
+        switch self {
+        case .getroffen: return "Getroffen"
+        case .teilweise: return "Teilweise"
+        case .fehlt: return "Fehlt"
+        }
     }
 }
 

@@ -33,6 +33,17 @@ final class SpeechService: NSObject, ObservableObject {
     /// ob per lokalem Synthesizer (Delegate) oder per Cloud-Wiedergabe
     /// (AVAudioPlayer-Delegate), beide lösen dieselbe Continuation auf.
     private var pendingContinuation: CheckedContinuation<Void, Never>?
+    /// Zählt jede Ansage hoch (und jedes `stop()`). Alles, was asynchron zu
+    /// einer ÄLTEREN Ansage gehört -- ein verspätet geladenes Cloud-Audio,
+    /// ein noch nicht gestarteter Task, ein verspäteter Delegate-Rückruf --,
+    /// prüft vor dem Abspielen bzw. Beenden, ob es noch aktuell ist, und
+    /// verwirft sich sonst. So kann nie eine alte Ansage über eine neue
+    /// laufen oder deren `speakAndWait` vorzeitig beenden (genau das sah
+    /// Simon beim Testen: erst Stille, dann mehrere Ansagen übereinander).
+    private var generation = 0
+    /// Die aktuell laufende lokale Ansage bzw. Cloud-Wiedergabe -- nur deren
+    /// Delegate-Rückrufe dürfen `speakAndWait` beenden.
+    private var currentUtterance: AVSpeechUtterance?
 
     private let auth: AuthManager
 
@@ -53,20 +64,43 @@ final class SpeechService: NSObject, ObservableObject {
     func speak(_ text: String, voice: AVSpeechSynthesisVoice? = nil, languageHint: String? = nil) {
         guard !text.isEmpty else { return }
         stop()
+        generation += 1
+        let myGeneration = generation
         AudioSessionCoordinator.activate()
 
         if let voice {
-            speakLocally(text, voice: voice, languageHint: languageHint)
+            speakLocally(text, voice: voice, languageHint: languageHint, generation: myGeneration)
             return
         }
 
         // Optimistisch schon hier gesetzt (nicht erst wenn die Cloud-Antwort
-        // tatsächlich eintrifft) -- sonst würde z.B. der "Spielt ab…"-Button
-        // in StudyView während des kurzen Netzwerk-Ladens fälschlich noch
-        // "Frage nochmal vorlesen" anzeigen.
+        // tatsächlich eintrifft) -- sonst würde z.B. ein "Spielt ab…"-Button
+        // während des kurzen Netzwerk-Ladens fälschlich "Vorlesen" anzeigen.
         isSpeaking = true
         cloudTask = Task { [weak self] in
-            await self?.speakPreferCloud(text, languageHint: languageHint)
+            await self?.speakPreferCloud(text, languageHint: languageHint, generation: myGeneration)
+        }
+    }
+
+    /// Lädt die Cloud-Stimme für diese Texte schon vorab in den Cache, ohne
+    /// etwas abzuspielen -- z.B. die nächste Frage, während der User noch
+    /// antwortet. Die spätere Ansage startet dann sofort statt nach einer
+    /// Netzwerk-Pause. Fehler werden still ignoriert: beim eigentlichen
+    /// Vorlesen greift ohnehin der normale Weg samt lokalem Fallback.
+    /// Kostet nichts extra, weil genau diese Texte sonst kurz danach ohnehin
+    /// geladen würden (gleicher Cache-Schlüssel wie `speak`).
+    func prefetch(_ texts: [String]) async {
+        let voiceKey = CloudSpeechConfig.voiceIdentifier
+        for text in texts where !text.isEmpty {
+            if Task.isCancelled { return }
+            guard AudioFileCache.cachedFileURL(text: text, voice: voiceKey) == nil else { continue }
+            do {
+                let token = await auth.validAccessToken()
+                let data = try await CloudSpeechService.synthesize(text: text, accessToken: token)
+                _ = AudioFileCache.store(data, text: text, voice: voiceKey)
+            } catch {
+                return
+            }
         }
     }
 
@@ -86,7 +120,10 @@ final class SpeechService: NSObject, ObservableObject {
     }
 
     func stop() {
+        // Macht alles ungültig, was noch zu einer älteren Ansage unterwegs ist.
+        generation += 1
         synthesizer.stopSpeaking(at: .immediate)
+        currentUtterance = nil
         audioPlayer?.stop()
         audioPlayer = nil
         cloudTask?.cancel()
@@ -98,60 +135,71 @@ final class SpeechService: NSObject, ObservableObject {
 
     // MARK: - Cloud-Pfad
 
-    private func speakPreferCloud(_ text: String, languageHint: String?) async {
+    private func speakPreferCloud(_ text: String, languageHint: String?, generation myGeneration: Int) async {
         let voiceKey = CloudSpeechConfig.voiceIdentifier
 
         if let cached = AudioFileCache.cachedFileURL(text: text, voice: voiceKey) {
-            playCloudAudio(fileURL: cached)
+            playCloudAudio(fileURL: cached, text: text, languageHint: languageHint, generation: myGeneration)
             return
         }
 
         do {
             let token = await auth.validAccessToken()
             let data = try await CloudSpeechService.synthesize(text: text, accessToken: token)
-            if Task.isCancelled { return }
+            // Auch eine inzwischen überholte Antwort landet im Cache -- sie
+            // ist bezahlt und wird beim nächsten Mal gebraucht --, wird aber
+            // nicht mehr abgespielt (Prüfung in `playCloudAudio`).
             let cachedURL = AudioFileCache.store(data, text: text, voice: voiceKey)
             if let cachedURL {
-                playCloudAudio(fileURL: cachedURL)
+                playCloudAudio(fileURL: cachedURL, text: text, languageHint: languageHint, generation: myGeneration)
             } else {
                 // Schreiben in den Cache fehlgeschlagen (z.B. Speicher voll) --
-                // trotzdem direkt aus den Bytes abspielen, kein Grund die
-                // Ansage deswegen ausfallen zu lassen.
-                playCloudAudio(data: data)
+                // trotzdem direkt aus den Bytes abspielen.
+                playCloudAudio(data: data, text: text, languageHint: languageHint, generation: myGeneration)
             }
         } catch {
-            if Task.isCancelled { return }
             // Kein Netz / Edge Function nicht erreichbar / Rate-Limit erreicht
             // -- App bleibt trotzdem benutzbar, nur mit schlechterer Stimme.
-            speakLocally(text, voice: nil, languageHint: languageHint)
+            speakLocally(text, voice: nil, languageHint: languageHint, generation: myGeneration)
         }
     }
 
-    private func playCloudAudio(fileURL: URL) {
-        playCloudAudio(player: try? AVAudioPlayer(contentsOf: fileURL))
+    private func playCloudAudio(fileURL: URL, text: String, languageHint: String?, generation myGeneration: Int) {
+        play(try? AVAudioPlayer(contentsOf: fileURL), text: text, languageHint: languageHint, generation: myGeneration)
     }
 
-    private func playCloudAudio(data: Data) {
-        playCloudAudio(player: try? AVAudioPlayer(data: data))
+    private func playCloudAudio(data: Data, text: String, languageHint: String?, generation myGeneration: Int) {
+        play(try? AVAudioPlayer(data: data), text: text, languageHint: languageHint, generation: myGeneration)
     }
 
-    private func playCloudAudio(player: AVAudioPlayer?) {
-        guard let player else {
-            // Kaputte/nicht abspielbare Audiodaten -- kein Crash, einfach
-            // stumm bleiben. Sollte praktisch nie passieren (Google TTS
-            // liefert immer valides MP3), aber besser als ein Force-Unwrap.
-            return
+    private func play(_ player: AVAudioPlayer?, text: String, languageHint: String?, generation myGeneration: Int) {
+        // Inzwischen kam eine neuere Ansage oder ein stop(): nichts abspielen.
+        guard myGeneration == generation else { return }
+        if let player {
+            // Delegate und Referenz VOR dem Start setzen, damit das Ende der
+            // Wiedergabe garantiert dieser Ansage zugeordnet wird.
+            player.delegate = self
+            audioPlayer = player
+            if player.play() {
+                isSpeaking = true
+                return
+            }
+            audioPlayer = nil
         }
-        player.delegate = self
-        audioPlayer = player
-        isSpeaking = true
-        player.play()
+        // Kaputte/nicht abspielbare Audiodaten: lieber lokal vorlesen, als
+        // stumm zu bleiben -- und vor allem nie ein `speakAndWait` ewig hängen
+        // lassen (das blockierte früher den ganzen Lernablauf).
+        speakLocally(text, voice: nil, languageHint: languageHint, generation: myGeneration)
     }
 
     // MARK: - Lokaler Fallback (Apple TTS)
 
-    private func speakLocally(_ text: String, voice: AVSpeechSynthesisVoice?, languageHint: String?) {
-        synthesizer.speak(makeUtterance(text, voice: voice, languageHint: languageHint))
+    private func speakLocally(_ text: String, voice: AVSpeechSynthesisVoice?, languageHint: String?, generation myGeneration: Int) {
+        guard myGeneration == generation else { return }
+        let utterance = makeUtterance(text, voice: voice, languageHint: languageHint)
+        currentUtterance = utterance
+        isSpeaking = true
+        synthesizer.speak(utterance)
     }
 
     private func makeUtterance(_ text: String, voice: AVSpeechSynthesisVoice? = nil, languageHint: String? = nil) -> AVSpeechUtterance {
@@ -211,28 +259,46 @@ final class SpeechService: NSObject, ObservableObject {
         pendingContinuation?.resume()
         pendingContinuation = nil
     }
+
+    /// Beendet nur, wenn der Rückruf zur GERADE laufenden lokalen Ansage
+    /// gehört. Ein verspätetes "didCancel" einer gestoppten älteren Ansage
+    /// würde sonst das `speakAndWait` der neuen Ansage vorzeitig auflösen --
+    /// der Lernablauf liefe weiter (Signalton, Aufnahme), während die App
+    /// noch spricht.
+    ///
+    /// Vergleich per Objekt-Identität (`===`) mit festgehaltener Referenz
+    /// statt per Speicheradresse: so kann eine neue Ansage nie zufällig die
+    /// Adresse einer gerade freigegebenen alten bekommen und verwechselt werden.
+    fileprivate func finishIfCurrent(utterance: AVSpeechUtterance) {
+        guard currentUtterance === utterance else { return }
+        currentUtterance = nil
+        finishSpeaking()
+    }
+
+    /// Wie oben, für die Cloud-Wiedergabe.
+    fileprivate func finishIfCurrent(player: AVAudioPlayer) {
+        guard audioPlayer === player else { return }
+        audioPlayer = nil
+        finishSpeaking()
+    }
 }
 
 extension SpeechService: AVSpeechSynthesizerDelegate {
-    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didStart utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.isSpeaking = true }
-    }
-
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didFinish utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.finishSpeaking() }
+        Task { @MainActor in self.finishIfCurrent(utterance: utterance) }
     }
 
     nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer, didCancel utterance: AVSpeechUtterance) {
-        Task { @MainActor in self.finishSpeaking() }
+        Task { @MainActor in self.finishIfCurrent(utterance: utterance) }
     }
 }
 
 extension SpeechService: AVAudioPlayerDelegate {
     nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor in self.finishSpeaking() }
+        Task { @MainActor in self.finishIfCurrent(player: player) }
     }
 
     nonisolated func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
-        Task { @MainActor in self.finishSpeaking() }
+        Task { @MainActor in self.finishIfCurrent(player: player) }
     }
 }

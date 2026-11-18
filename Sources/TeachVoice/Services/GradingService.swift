@@ -5,16 +5,34 @@ struct GradingResult: Decodable {
         case richtig, teilweise, falsch
     }
 
+    /// Einzelurteil der KI für einen Kontrollpunkt der Karte.
+    struct Punkt: Decodable, Hashable {
+        enum Status: String, Decodable {
+            case getroffen, teilweise, fehlt
+        }
+
+        let text: String
+        let status: Status
+        /// Kurzes Zitat aus der gesprochenen Antwort, das den Punkt abdeckt
+        /// (leer, wenn er fehlt).
+        let beleg: String?
+    }
+
     let kernelementeGetroffen: Int
+    /// Vom Server aus den Einzelurteilen berechnet (teilweise = halber Punkt).
     let deckungProzent: Double
     let getroffeneElemente: [String]
+    /// Alles, was nicht voll getroffen wurde (fehlt + teilweise).
     let fehlendeElemente: [String]
     let urteil: Urteil
-    let kurzesFeedback: String
-    /// Kurze, vorlesbare richtige Antwort (1-2 Sätze) mit Schwerpunkt auf dem,
-    /// was gefehlt hat. Optional, weil eine ältere, noch nicht neu deployte
-    /// Version von `grade-answer` das Feld nicht mitschickt.
+    /// Nur noch aus Kompatibilität mit älteren Server-Versionen.
+    let kurzesFeedback: String?
+    /// Kurze, vorlesbare richtige Antwort (1-2 Sätze), die nur das Fehlende
+    /// nennt. Leer, wenn alles getroffen wurde.
     let kurzloesung: String?
+    /// Einzelurteil pro Kontrollpunkt, in Reihenfolge der Kontrollpunkte.
+    /// `nil` bei einer älteren Server-Version.
+    let punkte: [Punkt]?
 
     enum CodingKeys: String, CodingKey {
         case kernelementeGetroffen = "kernelemente_getroffen"
@@ -24,6 +42,7 @@ struct GradingResult: Decodable {
         case urteil
         case kurzesFeedback = "kurzes_feedback"
         case kurzloesung
+        case punkte
     }
 }
 
