@@ -8,7 +8,11 @@ on:
 
 jobs:
   build:
-    runs-on: macos-15
+    # Intel statt Apple Silicon (`macos-15`): im November 2026 wurden zwei
+    # Builds hintereinander abgebrochen, weil GitHub wegen Kapazitäts-
+    # engpässen keinen arm64-Mac zugeteilt hat ("not acquired by Runner").
+    # Für die iOS-App ist die Architektur des Build-Rechners egal.
+    runs-on: macos-15-intel
     steps:
       - name: Checkout
         uses: actions/checkout@v4
