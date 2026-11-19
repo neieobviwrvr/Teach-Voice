@@ -396,7 +396,9 @@ struct VoiceStudyView: View {
             // damit beide exakt denselben FSRS-Zustand berechnen.
             let now = Date()
             queue.record(urteil, percent: newFeedback.result?.deckungProzent, now: now, examDate: library.examDate(for: card))
-            await library.recordSpacedRepetitionOutcome(for: card, urteil: urteil, now: now)
+            await library.recordSpacedRepetitionOutcome(
+                for: card, urteil: urteil, mode: .sprechen, percent: newFeedback.result?.deckungProzent, now: now
+            )
         }
 
         if !Task.isCancelled, queue.isFinished {

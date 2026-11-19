@@ -181,7 +181,7 @@ struct AnkiStudyView: View {
         queue.record(rating, now: now, examDate: library.examDate(for: card))
         showAnswer = false
         Task {
-            await library.recordSpacedRepetitionOutcome(for: card, rating: rating, now: now)
+            await library.recordSpacedRepetitionOutcome(for: card, rating: rating, mode: .tippen, now: now)
             isSaving = false
         }
     }

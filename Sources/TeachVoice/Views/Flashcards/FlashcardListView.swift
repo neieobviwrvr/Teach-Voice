@@ -21,6 +21,11 @@ struct FlashcardListView: View {
                     } label: {
                         Label("Lernen", systemImage: "graduationcap")
                     }
+                    NavigationLink {
+                        StatisticsView(scope: .subfolder(subfolder))
+                    } label: {
+                        Label("Statistik", systemImage: "chart.bar.xaxis")
+                    }
                 }
             }
 

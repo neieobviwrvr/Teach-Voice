@@ -25,6 +25,16 @@ struct SubfolderListView: View {
         List {
             examSection
 
+            if !library.subfolders(in: folder).isEmpty {
+                Section {
+                    NavigationLink {
+                        StatisticsView(scope: .folder(currentFolder))
+                    } label: {
+                        Label("Statistik", systemImage: "chart.bar.xaxis")
+                    }
+                }
+            }
+
             if library.subfolders(in: folder).count > 1 {
                 Section {
                     Button {

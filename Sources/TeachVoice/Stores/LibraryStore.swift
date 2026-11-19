@@ -227,10 +227,20 @@ final class LibraryStore: ObservableObject {
     /// Der Prüfungstermin des Ober-Ordners, zu dem diese Karte gehört (nur
     /// bekannt, wenn der Unterordner geladen ist -- das ist beim Lernen immer so).
     func examDate(for flashcard: Flashcard) -> Date? {
-        for (folderId, list) in subfolders where list.contains(where: { $0.id == flashcard.subfolderId }) {
+        examDate(forSubfolderId: flashcard.subfolderId)
+    }
+
+    func examDate(forSubfolderId subfolderId: UUID) -> Date? {
+        for (folderId, list) in subfolders where list.contains(where: { $0.id == subfolderId }) {
             return folders.first { $0.id == folderId }?.examAt
         }
         return nil
+    }
+
+    /// Lernverlauf ab `since` (für die Statistik). Fehler -> leere Liste,
+    /// die Statistik zeigt dann nur den Kartenstand.
+    func reviewLogs(since: Date) async -> [ReviewLog] {
+        (try? await repository.fetchReviewLogs(since: since)) ?? []
     }
 
     /// Kurztext, wann FSRS die Karte bei dieser Bewertung wieder zeigt
@@ -261,16 +271,46 @@ final class LibraryStore: ObservableObject {
     /// demselben Kartenstand wie die Lernrunde (`StudyQueue.record`), damit
     /// gespeicherter Zustand und Runde übereinstimmen.
     @discardableResult
-    func recordSpacedRepetitionOutcome(for flashcard: Flashcard, urteil: GradingResult.Urteil, now: Date = Date()) async -> Flashcard? {
-        await recordSpacedRepetitionOutcome(for: flashcard, rating: FSRSRating(urteil), now: now)
+    func recordSpacedRepetitionOutcome(
+        for flashcard: Flashcard,
+        urteil: GradingResult.Urteil,
+        mode: StudyMode,
+        percent: Double? = nil,
+        now: Date = Date()
+    ) async -> Flashcard? {
+        await recordSpacedRepetitionOutcome(for: flashcard, rating: FSRSRating(urteil), mode: mode, percent: percent, now: now)
     }
 
-    /// Wie oben, mit einer der vier FSRS-Bewertungen (Tipp-Modus).
+    /// Wie oben, mit einer der vier FSRS-Bewertungen (Tipp-Modus). Schreibt
+    /// zusätzlich einen Eintrag in den Lernverlauf (`review_logs`).
     @discardableResult
-    func recordSpacedRepetitionOutcome(for flashcard: Flashcard, rating: FSRSRating, now: Date = Date()) async -> Flashcard? {
-        let outcome = FSRSScheduler.review(
-            flashcard.fsrsState, rating: rating, now: now, examDate: examDate(for: flashcard)
+    func recordSpacedRepetitionOutcome(
+        for flashcard: Flashcard,
+        rating: FSRSRating,
+        mode: StudyMode,
+        percent: Double? = nil,
+        now: Date = Date()
+    ) async -> Flashcard? {
+        let before = flashcard.fsrsState
+        let outcome = FSRSScheduler.review(before, rating: rating, now: now, examDate: examDate(for: flashcard))
+
+        // Lernverlauf: unabhängig davon, ob das Speichern des Kartenstands
+        // klappt -- und ein Fehler hier soll das Lernen nie stören.
+        let elapsed = before.lastReview.map {
+            FSRSScheduler.learningDay(now, calendar: .current) - FSRSScheduler.learningDay($0, calendar: .current)
+        }
+        let log = NewReviewLog(
+            flashcardId: flashcard.id, rating: rating, reviewedAt: now, mode: mode,
+            elapsedDays: before.isNew ? nil : elapsed, intervalDays: outcome.intervalDays,
+            stability: outcome.state.stability ?? 0, difficulty: outcome.state.difficulty ?? 0,
+            deckungProzent: percent
         )
+        do {
+            try await repository.insertReviewLog(log)
+        } catch {
+            print("Lernverlauf-Eintrag fehlgeschlagen: \(error.localizedDescription)")
+        }
+
         do {
             let updated = try await repository.updateFlashcardReview(id: flashcard.id, state: outcome.state)
             if var list = flashcards[flashcard.subfolderId], let idx = list.firstIndex(where: { $0.id == flashcard.id }) {

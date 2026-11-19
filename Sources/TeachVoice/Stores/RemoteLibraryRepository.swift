@@ -54,6 +54,36 @@ private struct ReviewPatch: Encodable {
     }
 }
 
+private struct ReviewLogBody: Encodable {
+    let userId: UUID
+    let log: NewReviewLog
+    enum CodingKeys: String, CodingKey {
+        case userId = "user_id"
+        case flashcardId = "flashcard_id"
+        case rating
+        case reviewedAt = "reviewed_at"
+        case mode
+        case elapsedDays = "elapsed_days"
+        case intervalDays = "interval_days"
+        case stability, difficulty
+        case deckungProzent = "deckung_prozent"
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(userId, forKey: .userId)
+        try container.encode(log.flashcardId, forKey: .flashcardId)
+        try container.encode(log.rating.rawValue, forKey: .rating)
+        try container.encode(log.reviewedAt, forKey: .reviewedAt)
+        try container.encode(log.mode.logValue, forKey: .mode)
+        try container.encode(log.elapsedDays, forKey: .elapsedDays)
+        try container.encode(log.intervalDays, forKey: .intervalDays)
+        try container.encode(log.stability, forKey: .stability)
+        try container.encode(log.difficulty, forKey: .difficulty)
+        try container.encode(log.deckungProzent, forKey: .deckungProzent)
+    }
+}
+
 private struct ExamDatePatch: Encodable {
     let examAt: Date?
     enum CodingKeys: String, CodingKey { case examAt = "exam_at" }
@@ -206,6 +236,31 @@ final class RemoteLibraryRepository: LibraryRepository {
             table: "flashcards",
             id: id,
             body: GradingCachePatch(kernelemente: kernelemente, kernelementeSourceHash: sourceHash),
+            accessToken: ctx.token
+        )
+    }
+
+    func insertReviewLog(_ log: NewReviewLog) async throws {
+        let ctx = try await context()
+        let _: ReviewLog = try await SupabaseRestClient.insert(
+            table: "review_logs",
+            body: ReviewLogBody(userId: ctx.userId, log: log),
+            accessToken: ctx.token
+        )
+    }
+
+    func fetchReviewLogs(since: Date) async throws -> [ReviewLog] {
+        let ctx = try await context()
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime]
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return try await SupabaseRestClient.select(
+            table: "review_logs",
+            query: [
+                URLQueryItem(name: "user_id", value: "eq.\(ctx.userId.uuidString)"),
+                URLQueryItem(name: "reviewed_at", value: "gte.\(formatter.string(from: since))"),
+                URLQueryItem(name: "order", value: "reviewed_at.asc"),
+            ],
             accessToken: ctx.token
         )
     }

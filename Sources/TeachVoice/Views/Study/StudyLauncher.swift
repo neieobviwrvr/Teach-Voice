@@ -9,6 +9,14 @@ import SwiftUI
 enum StudyMode: Hashable {
     case sprechen
     case tippen
+
+    /// Wert für `review_logs.mode`.
+    var logValue: String {
+        switch self {
+        case .sprechen: return "sprechen"
+        case .tippen: return "tippen"
+        }
+    }
 }
 
 /// Was abgefragt werden soll, bevor der Modus gewählt ist: ein Unterordner

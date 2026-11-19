@@ -32,6 +32,18 @@ Eine Lernrunde (`Core/StudyQueue.swift`) fragt nur **fällige und neue** Karten 
 
 **Prüfungstermin** (optional, pro Ordner, in der Ordner-Ansicht): Würde eine Karte erst nach der Prüfung wieder fällig, zieht die App die Wiederholung auf die Hälfte der verbleibenden Tage vor – jede Karte kommt vorher noch mindestens einmal dran, und die Abstände werden zur Prüfung hin kürzer.
 
+## Statistik und Lernverlauf
+
+In jedem Ordner und Unterordner gibt es **Statistik** (`Views/Study/StatisticsView.swift`, Berechnung in `Core/LearningStats.swift`):
+
+- **Fortschritt:** „87 von 141 Karten gelernt, 54 noch neu“.
+- **Wie viel du gerade weißt:** FSRS schätzt für jede gelernte Karte die Abrufwahrscheinlichkeit *jetzt*. Gemittelt über alle Karten (neue zählen als 0 %) und nur über die gelernten.
+- **Fällig:** heute und in den nächsten 7 Tagen.
+- **Prüfung** (mit Prüfungstermin): „Am Prüfungstag voraussichtlich 78 % abrufbar, wenn du nach Plan wiederholst“, dazu der Wert ohne weiteres Lernen.
+- **Lernverlauf:** Lerntage, Serie, Bewertungen pro Tag (Diagramm der letzten 14 Tage).
+
+Dafür wird jede Bewertung in `review_logs` protokolliert (Gastmodus: lokal im Snapshot). Das ist zugleich die Datengrundlage, um FSRS später auf das persönliche Gedächtnis zu trainieren.
+
 ## KI-Konnektor (Claude)
 
 Claude kann über einen eigenen MCP-Konnektor (Edge Function `supabase/functions/teach-mcp`) direkt Ordner, Unterordner und Karteikarten in die eigene Teach-Bibliothek schreiben, z.B. „Mach mir 10 Karten zu Kapitel 3 in den Unterordner Sozialpsychologie“. Die App zeigt die neuen Karten beim nächsten Laden an (auch automatisch beim Zurückwechseln in die App).

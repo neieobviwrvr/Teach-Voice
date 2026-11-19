@@ -8,6 +8,8 @@ final class LocalLibraryRepository: LibraryRepository {
         var folders: [Folder] = []
         var subfolders: [Subfolder] = []
         var flashcards: [Flashcard] = []
+        /// Optional, damit ältere Snapshots (ohne Lernverlauf) lesbar bleiben.
+        var reviewLogs: [ReviewLog]? = nil
     }
 
     private let userId = GuestIdentity.id
@@ -163,6 +165,21 @@ final class LocalLibraryRepository: LibraryRepository {
         snapshot.flashcards[idx].kernelementeSourceHash = sourceHash
         persist()
         return snapshot.flashcards[idx]
+    }
+
+    func insertReviewLog(_ log: NewReviewLog) async throws {
+        let entry = ReviewLog(
+            id: UUID(), userId: userId, flashcardId: log.flashcardId, rating: log.rating.rawValue,
+            reviewedAt: log.reviewedAt, mode: log.mode.logValue, elapsedDays: log.elapsedDays,
+            intervalDays: log.intervalDays, stability: log.stability, difficulty: log.difficulty,
+            deckungProzent: log.deckungProzent
+        )
+        snapshot.reviewLogs = (snapshot.reviewLogs ?? []) + [entry]
+        persist()
+    }
+
+    func fetchReviewLogs(since: Date) async throws -> [ReviewLog] {
+        (snapshot.reviewLogs ?? []).filter { $0.reviewedAt >= since }.sorted { $0.reviewedAt < $1.reviewedAt }
     }
 
     func updateFlashcardReview(id: UUID, state: FSRSCardState) async throws -> Flashcard {

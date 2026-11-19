@@ -32,4 +32,9 @@ protocol LibraryRepository: AnyObject {
     /// Schreibt den FSRS-Lernzustand fort (Stabilität, Schwierigkeit,
     /// Wiederholungen, Fälligkeit, letzte Wiederholung).
     func updateFlashcardReview(id: UUID, state: FSRSCardState) async throws -> Flashcard
+
+    /// Protokolliert eine einzelne Bewertung (Lernverlauf).
+    func insertReviewLog(_ log: NewReviewLog) async throws
+    /// Lernverlauf ab `since`, älteste zuerst.
+    func fetchReviewLogs(since: Date) async throws -> [ReviewLog]
 }

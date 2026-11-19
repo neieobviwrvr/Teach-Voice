@@ -108,6 +108,49 @@ struct Flashcard: Codable, Identifiable, Hashable {
     }
 }
 
+/// Ein Eintrag im Lernverlauf: eine einzelne Bewertung einer Karte
+/// (`review_logs`, siehe 0015_review_logs.sql). Grundlage für die Statistik
+/// und später für ein persönliches FSRS-Training.
+struct ReviewLog: Codable, Identifiable, Hashable {
+    let id: UUID
+    let userId: UUID
+    let flashcardId: UUID
+    /// 1 = Nochmal/Falsch, 2 = Schwer/Teilweise, 3 = Gut/Richtig, 4 = Einfach.
+    let rating: Int
+    let reviewedAt: Date
+    /// "sprechen" oder "tippen".
+    let mode: String
+    let elapsedDays: Int?
+    let intervalDays: Int?
+    let stability: Double
+    let difficulty: Double
+    let deckungProzent: Double?
+
+    enum CodingKeys: String, CodingKey {
+        case id, rating, mode, stability, difficulty
+        case userId = "user_id"
+        case flashcardId = "flashcard_id"
+        case reviewedAt = "reviewed_at"
+        case elapsedDays = "elapsed_days"
+        case intervalDays = "interval_days"
+        case deckungProzent = "deckung_prozent"
+    }
+}
+
+/// Die Daten eines neuen Lernverlauf-Eintrags (ohne ID/User, die setzt das
+/// Repository).
+struct NewReviewLog: Equatable {
+    let flashcardId: UUID
+    let rating: FSRSRating
+    let reviewedAt: Date
+    let mode: StudyMode
+    let elapsedDays: Int?
+    let intervalDays: Int?
+    let stability: Double
+    let difficulty: Double
+    let deckungProzent: Double?
+}
+
 // Keine Mengen-Limits mehr für Ordner, Unterordner oder Karteikarten (Simons
 // Entscheidung fürs MVP, das vorerst nur er selbst nutzt). Die früheren
 // DB-Trigger entfernt supabase/migrations/0013_remove_limits.sql.
