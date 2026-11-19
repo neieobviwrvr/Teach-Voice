@@ -1,9 +1,9 @@
 import Foundation
 
-/// Bewertung einer Wiederholung im Sinne von FSRS. Die App hat drei Buttons:
-/// Falsch = Again, Teilweise = Hard (zählt in FSRS als "gerade noch gewusst"),
-/// Richtig = Good. Easy gibt es (noch) nicht als Button, das Modell
-/// unterstützt es aber vollständig.
+/// Bewertung einer Wiederholung im Sinne von FSRS.
+/// - Tipp-Modus (Anki-Stil): alle vier Buttons Nochmal/Schwer/Gut/Einfach.
+/// - Sprach-Modus: drei Buttons, Falsch = Again, Teilweise = Hard (zählt in
+///   FSRS als "gerade noch gewusst"), Richtig = Good.
 enum FSRSRating: Int, CaseIterable {
     case again = 1, hard = 2, good = 3, easy = 4
 
@@ -12,6 +12,27 @@ enum FSRSRating: Int, CaseIterable {
         case .falsch: self = .again
         case .teilweise: self = .hard
         case .richtig: self = .good
+        }
+    }
+
+    /// Beschriftung im Tipp-Modus (wie in Anki/StudyFlash).
+    var label: String {
+        switch self {
+        case .again: return "Nochmal"
+        case .hard: return "Schwer"
+        case .good: return "Gut"
+        case .easy: return "Einfach"
+        }
+    }
+}
+
+extension GradingResult.Urteil {
+    /// Für Statistik und Haptik: Gut und Einfach zählen als richtig.
+    init(_ rating: FSRSRating) {
+        switch rating {
+        case .again: self = .falsch
+        case .hard: self = .teilweise
+        case .good, .easy: self = .richtig
         }
     }
 }

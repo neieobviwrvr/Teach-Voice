@@ -75,10 +75,7 @@ struct VoiceStudyView: View {
 
     init(request: StudySessionRequest) {
         self.request = request
-        let cards = request.nurFaellige
-            ? SpacedRepetition.sessionCards(request.allCards)
-            : SpacedRepetition.ordered(request.allCards)
-        _queue = State(initialValue: StudyQueue(cards: cards))
+        _queue = State(initialValue: StudyQueue(cards: request.sessionCards))
     }
 
     var body: some View {
@@ -556,8 +553,9 @@ struct VoiceStudyView: View {
 
     private func restartWithAllCards() {
         stopEverything()
+        // "Alle Karten nochmal üben": alle am Stück, mit aktuellem FSRS-Stand.
         let fresh = request.allCards.compactMap { library.currentVersion(of: $0) }
-        queue = StudyQueue(cards: SpacedRepetition.ordered(fresh))
+        queue = StudyQueue(cards: fresh)
         feedback = nil
         phase = .vorbereiten
         startLoop()

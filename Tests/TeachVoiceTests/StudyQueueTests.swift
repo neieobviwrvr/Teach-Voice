@@ -105,6 +105,31 @@ final class StudyQueueTests: XCTestCase {
         XCTAssertEqual(queue.cardCount, 1)
     }
 
+    func testAnkiRatingsIncludingEasy() {
+        // Tipp-Modus: alle vier FSRS-Bewertungen. Neue Karte, Einfach -> 8 Tage.
+        var queue = StudyQueue(cards: [makeCard()])
+        let outcome = queue.record(FSRSRating.easy, now: noon(0), calendar: utc)
+        XCTAssertEqual(outcome?.intervalDays, 8)
+        XCTAssertEqual(queue.count(of: .richtig), 1, "Einfach zählt in der Statistik als richtig")
+        XCTAssertEqual(queue.firstAttempts.first?.rating, .easy)
+    }
+
+    func testCountersLikeAnki() {
+        var reviewed = makeCard(srsDueAt: noon(-1))
+        reviewed.apply(FSRSCardState(stability: 3, difficulty: 5, lastReview: noon(-4), due: noon(-1), reps: 1))
+        let neu1 = makeCard()
+        let neu2 = makeCard()
+        var queue = StudyQueue(cards: [neu1, reviewed, neu2])
+
+        XCTAssertEqual(queue.counts, StudyQueue.Counts(neu: 2, nochmal: 0, wiederholen: 1))
+
+        queue.record(FSRSRating.again, now: noon(0), calendar: utc)   // neu1 -> nochmal
+        XCTAssertEqual(queue.counts, StudyQueue.Counts(neu: 1, nochmal: 1, wiederholen: 1))
+
+        queue.record(FSRSRating.good, now: noon(0), calendar: utc)    // reviewed sitzt
+        XCTAssertEqual(queue.counts, StudyQueue.Counts(neu: 1, nochmal: 1, wiederholen: 0))
+    }
+
     func testUpcomingReturnsCurrentAndNextCardsInOrder() {
         let a = makeCard()
         let b = makeCard()

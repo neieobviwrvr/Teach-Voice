@@ -160,4 +160,11 @@ final class FSRSTests: XCTestCase {
         XCTAssertEqual(FSRSRating(.teilweise), .hard)
         XCTAssertEqual(FSRSRating(.richtig), .good)
     }
+
+    func testRatingMappingBackForStatistics() {
+        XCTAssertEqual(GradingResult.Urteil(FSRSRating.again), .falsch)
+        XCTAssertEqual(GradingResult.Urteil(FSRSRating.hard), .teilweise)
+        XCTAssertEqual(GradingResult.Urteil(FSRSRating.good), .richtig)
+        XCTAssertEqual(GradingResult.Urteil(FSRSRating.easy), .richtig)
+    }
 }

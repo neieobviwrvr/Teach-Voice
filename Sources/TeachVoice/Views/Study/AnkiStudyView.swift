@@ -1,9 +1,10 @@
 import SwiftUI
 
-/// Tipp-Modus im Anki-Stil: Frage lesen, "Antwort zeigen", selbst bewerten.
-/// Kein Mikrofon, keine KI, keine Kosten. Die Selbsteinschätzung geht wie im
-/// Sprach-Modus ins Spaced-Repetition-System, und falsche Karten kommen in
-/// derselben Session wieder (`StudyQueue`).
+/// Tipp-Modus im Anki-Stil (Vorbild: Anki/StudyFlash): Frage lesen, Karte
+/// antippen, dann mit Nochmal/Schwer/Gut/Einfach bewerten. Kein Mikrofon,
+/// keine KI, keine Kosten. Jede Bewertung geht direkt in FSRS -- dieselben
+/// Karten und derselbe Lernstand wie im Sprach-Modus. "Nochmal"-Karten kommen
+/// in derselben Runde wieder (`StudyQueue`).
 struct AnkiStudyView: View {
     let request: StudySessionRequest
 
@@ -17,34 +18,25 @@ struct AnkiStudyView: View {
 
     init(request: StudySessionRequest) {
         self.request = request
-        let cards = request.nurFaellige
-            ? SpacedRepetition.sessionCards(request.allCards)
-            : SpacedRepetition.ordered(request.allCards)
-        _queue = State(initialValue: StudyQueue(cards: cards))
+        _queue = State(initialValue: StudyQueue(cards: request.sessionCards))
     }
 
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
                 if let card = queue.current {
-                    Text(queue.progressText)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-
-                    cardFace(card)
+                    countersRow
+                    cardView(card)
 
                     if showAnswer {
-                        Text("Wie gut wusstest du es?")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
                         HStack(spacing: 8) {
-                            assessmentButton(.falsch)
-                            assessmentButton(.teilweise)
-                            assessmentButton(.richtig)
+                            ForEach(FSRSRating.allCases, id: \.self) { rating in
+                                ratingButton(rating, card: card)
+                            }
                         }
                     } else {
                         Button {
-                            withAnimation(.easeOut(duration: 0.2)) { showAnswer = true }
+                            flip()
                         } label: {
                             Text("Antwort zeigen").frame(maxWidth: .infinity)
                         }
@@ -69,56 +61,116 @@ struct AnkiStudyView: View {
         .onDisappear { speech.stop() }
     }
 
-    private func cardFace(_ card: Flashcard) -> some View {
-        VStack(spacing: 16) {
-            Text(flashcardMarkdown: card.question)
-                .font(.title2)
-                .multilineTextAlignment(.center)
+    // MARK: - Ansicht
 
-            Button {
-                speech.speak(FlashcardMarkdown.plainText(from: card.question))
-            } label: {
-                Label("Vorlesen", systemImage: "speaker.wave.2.fill")
-                    .font(.caption)
+    /// Neu · Nochmal · Wiederholen, wie die farbigen Zähler in Anki/StudyFlash.
+    private var countersRow: some View {
+        let counts = queue.counts
+        return HStack(spacing: 0) {
+            counter(counts.neu, label: "Neu", color: .blue)
+            Divider().frame(height: 24)
+            counter(counts.nochmal, label: "Nochmal", color: .red)
+            Divider().frame(height: 24)
+            counter(counts.wiederholen, label: "Wiederholen", color: .green)
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    private func counter(_ value: Int, label: String, color: Color) -> some View {
+        VStack(spacing: 2) {
+            HStack(spacing: 6) {
+                Circle().fill(color).frame(width: 8, height: 8)
+                Text("\(value)").font(.title3.monospacedDigit())
             }
-            .buttonStyle(.bordered)
+            Text(label).font(.caption2).foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .combine)
+    }
+
+    private func cardView(_ card: Flashcard) -> some View {
+        VStack(spacing: 16) {
+            HStack {
+                if queue.currentIsRepetition {
+                    Label("Nochmal", systemImage: "arrow.counterclockwise")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                } else if card.fsrsStability == nil {
+                    Label("Neu", systemImage: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(.blue)
+                }
+                Spacer()
+                Button {
+                    speech.speak(FlashcardMarkdown.plainText(from: showAnswer ? card.answer : card.question))
+                } label: {
+                    Image(systemName: "speaker.wave.2.fill")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Vorlesen")
+            }
+
+            Text(flashcardMarkdown: card.question)
+                .font(showAnswer ? Font.headline : Font.title2)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: .infinity)
 
             if showAnswer {
                 Divider()
                 Text(flashcardMarkdown: card.answer)
+                    .font(.title3)
                     .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Label("Tippe auf die Karte, um die Antwort zu sehen", systemImage: "hand.tap")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 24)
             }
         }
         .padding()
-        .frame(maxWidth: .infinity)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .frame(maxWidth: .infinity, minHeight: 260)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 20))
+        .contentShape(RoundedRectangle(cornerRadius: 20))
+        .onTapGesture {
+            if !showAnswer { flip() }
+        }
     }
 
-    private func assessmentButton(_ urteil: GradingResult.Urteil) -> some View {
+    /// Einer der vier Bewertungs-Buttons, mit dem Abstand, nach dem FSRS die
+    /// Karte bei dieser Bewertung wieder zeigt.
+    private func ratingButton(_ rating: FSRSRating, card: Flashcard) -> some View {
         Button {
-            assess(urteil)
+            assess(rating)
         } label: {
-            VStack(spacing: 2) {
-                Text(urteil.label)
-                // Wann FSRS die Karte bei dieser Bewertung wieder zeigt.
-                if let card = queue.current {
-                    Text(library.nextReviewLabel(for: card, urteil: urteil))
-                        .font(.caption2)
-                        .opacity(0.85)
-                }
+            VStack(spacing: 4) {
+                Image(systemName: rating.symbol)
+                    .font(.title3)
+                Text(rating.label)
+                    .font(.footnote.bold())
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(library.nextReviewLabel(for: card, rating: rating))
+                    .font(.caption2)
+                    .opacity(0.85)
             }
             .frame(maxWidth: .infinity)
+            .padding(.vertical, 6)
         }
-        .buttonStyle(.borderedProminent)
-        .tint(urteil.color)
-        .controlSize(.large)
+        .buttonStyle(.bordered)
+        .tint(rating.color)
         .disabled(isSaving)
     }
 
-    private func assess(_ urteil: GradingResult.Urteil) {
+    // MARK: - Aktionen
+
+    private func flip() {
+        withAnimation(.easeOut(duration: 0.2)) { showAnswer = true }
+    }
+
+    private func assess(_ rating: FSRSRating) {
         guard let card = queue.current else { return }
         speech.stop()
-        HapticFeedback.play(for: urteil)
+        HapticFeedback.play(for: GradingResult.Urteil(rating))
         // Erst die Schlange weiterschalten (sofortige Reaktion), dann im
         // Hintergrund speichern. `isSaving` verhindert Doppel-Taps, die
         // sonst die NÄCHSTE Karte gleich mitbewerten würden.
@@ -126,22 +178,43 @@ struct AnkiStudyView: View {
         // Gleicher Zeitpunkt und Prüfungstermin für Runde und Speichern, damit
         // beide exakt denselben FSRS-Zustand berechnen.
         let now = Date()
-        queue.record(urteil, now: now, examDate: library.examDate(for: card))
+        queue.record(rating, now: now, examDate: library.examDate(for: card))
         showAnswer = false
         Task {
-            await library.recordSpacedRepetitionOutcome(for: card, urteil: urteil, now: now)
+            await library.recordSpacedRepetitionOutcome(for: card, rating: rating, now: now)
             isSaving = false
         }
     }
 
     private func restartWithAllCards() {
+        // "Alle Karten nochmal üben": alle am Stück, mit aktuellem FSRS-Stand.
         let fresh = request.allCards.compactMap { library.currentVersion(of: $0) }
-        queue = StudyQueue(cards: SpacedRepetition.ordered(fresh))
+        queue = StudyQueue(cards: fresh)
         showAnswer = false
     }
 
     private func close() {
         speech.stop()
         dismiss()
+    }
+}
+
+extension FSRSRating {
+    var symbol: String {
+        switch self {
+        case .again: return "arrow.counterclockwise"
+        case .hard: return "tortoise"
+        case .good: return "checkmark.circle"
+        case .easy: return "star"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .again: return .red
+        case .hard: return .orange
+        case .good: return .blue
+        case .easy: return .green
+        }
     }
 }

@@ -15,10 +15,21 @@ struct StudyQueue {
     struct Attempt: Identifiable {
         let id = UUID()
         let card: Flashcard
-        let urteil: GradingResult.Urteil
+        let rating: FSRSRating
         /// Anteil getroffener Kernthemen laut KI, `nil` im Tipp-Modus oder
         /// wenn die KI-Bewertung nicht verfügbar war.
         let percent: Double?
+
+        /// Für die Statistik: Gut und Einfach zählen als richtig.
+        var urteil: GradingResult.Urteil { GradingResult.Urteil(rating) }
+    }
+
+    /// Zähler wie in Anki/StudyFlash: neue Karten, Karten, die in dieser
+    /// Runde nochmal drankommen, und fällige Wiederholungen.
+    struct Counts: Equatable {
+        let neu: Int
+        let nochmal: Int
+        let wiederholen: Int
     }
 
     private(set) var pending: [Flashcard]
@@ -60,6 +71,21 @@ struct StudyQueue {
     /// Wie viele Karten bereits mindestens einmal dran waren.
     var seenCount: Int { firstAttempts.count }
 
+    var counts: Counts {
+        let seen = Set(firstAttempts.map(\.card.id))
+        var neu = 0, nochmal = 0, wiederholen = 0
+        for card in pending {
+            if seen.contains(card.id) {
+                nochmal += 1
+            } else if card.fsrsStability == nil {
+                neu += 1
+            } else {
+                wiederholen += 1
+            }
+        }
+        return Counts(neu: neu, nochmal: nochmal, wiederholen: wiederholen)
+    }
+
     /// Verbucht das Ergebnis für die aktuelle Karte und gibt das
     /// FSRS-Ergebnis zurück. Gespeichert wird separat über
     /// `LibraryStore.recordSpacedRepetitionOutcome` mit demselben Kartenstand
@@ -72,17 +98,29 @@ struct StudyQueue {
         examDate: Date? = nil,
         calendar: Calendar = .current
     ) -> FSRSScheduler.Outcome? {
+        record(FSRSRating(urteil), percent: percent, now: now, examDate: examDate, calendar: calendar)
+    }
+
+    /// Wie oben, mit einer der vier FSRS-Bewertungen (Tipp-Modus).
+    @discardableResult
+    mutating func record(
+        _ rating: FSRSRating,
+        percent: Double? = nil,
+        now: Date = Date(),
+        examDate: Date? = nil,
+        calendar: Calendar = .current
+    ) -> FSRSScheduler.Outcome? {
         guard var card = pending.first else { return nil }
         pending.removeFirst()
 
         if firstAttempts.contains(where: { $0.card.id == card.id }) {
             repetitions += 1
         } else {
-            firstAttempts.append(Attempt(card: card, urteil: urteil, percent: percent))
+            firstAttempts.append(Attempt(card: card, rating: rating, percent: percent))
         }
 
         let outcome = FSRSScheduler.review(
-            card.fsrsState, rating: FSRSRating(urteil), now: now, examDate: examDate, calendar: calendar
+            card.fsrsState, rating: rating, now: now, examDate: examDate, calendar: calendar
         )
         card.apply(outcome.state)
         if outcome.isDueAgainToday {

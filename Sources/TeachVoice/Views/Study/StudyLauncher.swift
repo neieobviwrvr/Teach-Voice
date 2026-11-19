@@ -23,11 +23,19 @@ struct StudyScope: Identifiable, Equatable {
 struct StudySessionRequest: Identifiable, Hashable {
     let id = UUID()
     let title: String
-    /// Alle Karten des gewählten Bereichs. Abgefragt werden davon nur die
-    /// fälligen und neuen, außer `nurFaellige` ist `false`.
+    /// Alle Karten des gewählten Bereichs.
     let allCards: [Flashcard]
     let mode: StudyMode
+    /// `true` = Spaced Repetition: nur fällige und neue Karten, am längsten
+    /// überfällige zuerst. `false` = alle Karten am Stück in der normalen
+    /// Reihenfolge. In beiden Fällen fließt jede Bewertung in FSRS ein (FSRS
+    /// rechnet vorgezogene Wiederholungen korrekt mit ein).
     let nurFaellige: Bool
+
+    /// Die Karten, mit denen die Runde startet.
+    var sessionCards: [Flashcard] {
+        nurFaellige ? SpacedRepetition.sessionCards(allCards) : allCards
+    }
 }
 
 /// Zielansicht für eine `StudySessionRequest`, je nach Modus.
@@ -70,12 +78,22 @@ private struct StudyModeDialog: ViewModifier {
             titleVisibility: .visible,
             presenting: scope
         ) { scope in
-            let nurFaellige = !SpacedRepetition.sessionCards(scope.cards).isEmpty
-            Button("Sprechen (Zielnote \(Zielnote.gespeichert.anzeige))") {
-                onStart(StudySessionRequest(title: scope.title, allCards: scope.cards, mode: .sprechen, nurFaellige: nurFaellige))
+            let faellig = SpacedRepetition.sessionCards(scope.cards).count
+            if faellig > 0 {
+                Button("Tippen · Spaced Repetition (\(faellig))") {
+                    onStart(StudySessionRequest(title: scope.title, allCards: scope.cards, mode: .tippen, nurFaellige: true))
+                }
             }
-            Button("Tippen (Anki-Stil)") {
-                onStart(StudySessionRequest(title: scope.title, allCards: scope.cards, mode: .tippen, nurFaellige: nurFaellige))
+            Button("Tippen · Alle \(scope.cards.count) am Stück") {
+                onStart(StudySessionRequest(title: scope.title, allCards: scope.cards, mode: .tippen, nurFaellige: false))
+            }
+            if faellig > 0 {
+                Button("Sprechen · Spaced Repetition (\(faellig))") {
+                    onStart(StudySessionRequest(title: scope.title, allCards: scope.cards, mode: .sprechen, nurFaellige: true))
+                }
+            }
+            Button("Sprechen · Alle \(scope.cards.count) am Stück") {
+                onStart(StudySessionRequest(title: scope.title, allCards: scope.cards, mode: .sprechen, nurFaellige: false))
             }
             Button("Abbrechen", role: .cancel) {}
         } message: { scope in
@@ -85,9 +103,10 @@ private struct StudyModeDialog: ViewModifier {
 
     private static func message(for scope: StudyScope) -> String {
         let faellig = SpacedRepetition.sessionCards(scope.cards).count
+        let zielnote = "Sprechen bewertet mit Zielnote \(Zielnote.gespeichert.anzeige)."
         if faellig == 0 {
-            return "\(scope.title): Heute ist nichts fällig. Du übst alle \(scope.cards.count) Karten."
+            return "\(scope.title): Heute ist nichts fällig – du kannst alle \(scope.cards.count) Karten am Stück üben. \(zielnote)"
         }
-        return "\(scope.title): \(faellig) von \(scope.cards.count) Karten sind fällig oder neu. Falsche Karten kommen wieder, bis sie sitzen."
+        return "\(scope.title): \(faellig) von \(scope.cards.count) Karten sind fällig oder neu (Spaced Repetition mit FSRS). Jede Bewertung zählt für beide Modi. \(zielnote)"
     }
 }

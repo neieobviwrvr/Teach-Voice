@@ -236,9 +236,11 @@ final class LibraryStore: ObservableObject {
     /// Kurztext, wann FSRS die Karte bei dieser Bewertung wieder zeigt
     /// ("10 Min", "3 T", "2 Wo" ...) -- für die Bewertungs-Buttons.
     func nextReviewLabel(for flashcard: Flashcard, urteil: GradingResult.Urteil) -> String {
-        let outcome = FSRSScheduler.review(
-            flashcard.fsrsState, rating: FSRSRating(urteil), examDate: examDate(for: flashcard)
-        )
+        nextReviewLabel(for: flashcard, rating: FSRSRating(urteil))
+    }
+
+    func nextReviewLabel(for flashcard: Flashcard, rating: FSRSRating) -> String {
+        let outcome = FSRSScheduler.review(flashcard.fsrsState, rating: rating, examDate: examDate(for: flashcard))
         return FSRSScheduler.intervalLabel(outcome.intervalDays)
     }
 
@@ -260,8 +262,14 @@ final class LibraryStore: ObservableObject {
     /// gespeicherter Zustand und Runde übereinstimmen.
     @discardableResult
     func recordSpacedRepetitionOutcome(for flashcard: Flashcard, urteil: GradingResult.Urteil, now: Date = Date()) async -> Flashcard? {
+        await recordSpacedRepetitionOutcome(for: flashcard, rating: FSRSRating(urteil), now: now)
+    }
+
+    /// Wie oben, mit einer der vier FSRS-Bewertungen (Tipp-Modus).
+    @discardableResult
+    func recordSpacedRepetitionOutcome(for flashcard: Flashcard, rating: FSRSRating, now: Date = Date()) async -> Flashcard? {
         let outcome = FSRSScheduler.review(
-            flashcard.fsrsState, rating: FSRSRating(urteil), now: now, examDate: examDate(for: flashcard)
+            flashcard.fsrsState, rating: rating, now: now, examDate: examDate(for: flashcard)
         )
         do {
             let updated = try await repository.updateFlashcardReview(id: flashcard.id, state: outcome.state)
