@@ -61,14 +61,25 @@ final class SpeechService: NSObject, ObservableObject {
     /// "Anhören"-Button gedacht, der GENAU DIESE eine on-device Stimme
     /// vorspielen will. Normale Aufrufstellen lassen den Parameter weg und
     /// bekommen den Cloud-Pfad (mit lokalem Fallback bei Fehler).
-    func speak(_ text: String, voice: AVSpeechSynthesisVoice? = nil, languageHint: String? = nil) {
+    ///
+    /// `source` überschreibt die app-weite Einstellung (`VoicePreference.source`)
+    /// für genau diese Ansage -- nur für den "Google-Stimme anhören"-Button in
+    /// `VoicePickerView`, damit man beide Varianten vergleichen kann.
+    func speak(
+        _ text: String,
+        voice: AVSpeechSynthesisVoice? = nil,
+        languageHint: String? = nil,
+        source: SpeechSource? = nil
+    ) {
         guard !text.isEmpty else { return }
         stop()
         generation += 1
         let myGeneration = generation
         AudioSessionCoordinator.activate()
 
-        if let voice {
+        // Lokal vorlesen, wenn eine bestimmte iPhone-Stimme verlangt ist oder
+        // der User in den Einstellungen "iPhone-Stimme" gewählt hat.
+        if voice != nil || (source ?? VoicePreference.source) == .iphone {
             speakLocally(text, voice: voice, languageHint: languageHint, generation: myGeneration)
             return
         }
@@ -90,6 +101,8 @@ final class SpeechService: NSObject, ObservableObject {
     /// Kostet nichts extra, weil genau diese Texte sonst kurz danach ohnehin
     /// geladen würden (gleicher Cache-Schlüssel wie `speak`).
     func prefetch(_ texts: [String]) async {
+        // Mit iPhone-Stimme gibt es nichts zu laden (und nichts zu bezahlen).
+        guard VoicePreference.source == .google else { return }
         let voiceKey = CloudSpeechConfig.voiceIdentifier
         for text in texts where !text.isEmpty {
             if Task.isCancelled { return }

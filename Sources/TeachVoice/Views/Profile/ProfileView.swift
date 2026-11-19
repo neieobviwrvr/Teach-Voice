@@ -22,6 +22,8 @@ struct ProfileView: View {
     /// Strenge der KI-Bewertung im Sprach-Modus (siehe `Zielnote`). Wird
     /// beim Start jeder Sprach-Session über `Zielnote.gespeichert` gelesen.
     @AppStorage(Zielnote.speicherSchluessel) private var zielnoteWert = Zielnote.standardWert
+    /// Nur zur Anzeige, gewählt wird in `VoicePickerView`.
+    @AppStorage(VoicePreference.sourceKey) private var speechSource: SpeechSource = .google
 
     var body: some View {
         NavigationStack {
@@ -30,7 +32,11 @@ struct ProfileView: View {
                     NavigationLink {
                         VoicePickerView()
                     } label: {
-                        Label("Vorlesestimme wählen", systemImage: "waveform")
+                        LabeledContent {
+                            Text(speechSource.label)
+                        } label: {
+                            Label("Vorlesestimme", systemImage: "waveform")
+                        }
                     }
                 }
 

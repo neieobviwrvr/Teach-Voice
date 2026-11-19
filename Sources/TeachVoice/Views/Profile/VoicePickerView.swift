@@ -21,6 +21,10 @@ struct VoicePickerView: View {
     // tatsächlich gleichzeitig hörbar sein können.
     @EnvironmentObject private var previewSpeech: SpeechService
     @State private var selectedIdentifier: String? = VoicePreference.selectedIdentifier
+    /// App-weite Wahl Google- oder iPhone-Stimme (`VoicePreference.source`).
+    @AppStorage(VoicePreference.sourceKey) private var source: SpeechSource = .google
+    /// Kennung für die Vorschau der Google-Stimme in `playingIdentifier`.
+    private let googlePreviewID = "google-preview"
     // Getrennt von `previewSpeech.isSpeaking` (das ist nur EIN gemeinsamer
     // Bool für den ganzen Service) -- ohne dieses Feld würden beim Abspielen
     // EINER Stimme ALLE Zeilen gleichzeitig das "spielt ab"-Icon zeigen.
@@ -67,10 +71,16 @@ struct VoicePickerView: View {
 
     var body: some View {
         List {
+            sourceSection
+
             Section {
                 automaticRow
+            } header: {
+                Text("iPhone-Stimme")
             } footer: {
-                Text("Wählt beim Vorlesen automatisch die beste Enhanced-/Premium-Stimme, die iOS dieser App meldet.")
+                Text(source == .iphone
+                     ? "Diese Stimme liest überall in der App vor. „Automatisch“ nimmt die beste Enhanced-/Premium-Stimme, die iOS dieser App meldet."
+                     : "Gilt nur als Ersatz, wenn die Google-Stimme nicht erreichbar ist (z.B. ohne Internet). „Automatisch“ nimmt die beste Enhanced-/Premium-Stimme, die iOS dieser App meldet.")
             }
 
             Section {
@@ -133,6 +143,33 @@ struct VoicePickerView: View {
         .onDisappear {
             previewSpeech.stop()
             AudioSessionCoordinator.deactivate()
+        }
+    }
+
+    /// Der app-weite Schalter Google- oder iPhone-Stimme, plus Vorschau der
+    /// Google-Stimme zum direkten Vergleich mit den iPhone-Stimmen unten.
+    private var sourceSection: some View {
+        Section {
+            Picker("Vorlesen mit", selection: $source) {
+                ForEach(SpeechSource.allCases) { option in
+                    Text(option.label).tag(option)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Button {
+                playingIdentifier = googlePreviewID
+                previewSpeech.speak(sampleText, source: .google)
+            } label: {
+                let isPlaying = previewSpeech.isSpeaking && playingIdentifier == googlePreviewID
+                Label("Google-Stimme anhören", systemImage: isPlaying ? "speaker.wave.2.fill" : "play.circle")
+            }
+        } header: {
+            Text("Vorlesen mit")
+        } footer: {
+            Text(source == .google
+                 ? "Google-Stimme: über das Internet, kostet pro Zeichen (im Freikontingent). Ohne Internet springt die iPhone-Stimme ein."
+                 : "iPhone-Stimme: kostenlos, funktioniert offline und startet ohne Ladepause. Am natürlichsten klingt eine heruntergeladene Premium-Stimme.")
         }
     }
 
