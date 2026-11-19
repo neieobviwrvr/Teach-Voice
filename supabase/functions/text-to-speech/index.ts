@@ -1,7 +1,8 @@
 // supabase/functions/text-to-speech/index.ts
 //
 // Wandelt Text in gesprochenes Audio um, über Google Cloud Text-to-Speech
-// (WaveNet-Stimmen). Grund für den Wechsel weg von reinem on-device Apple-TTS:
+// (WaveNet- oder Chirp-3-HD-Stimme aus einer festen Liste, mit wählbarem
+// Sprechtempo, siehe ALLOWED_VOICES). Grund für den Wechsel weg von reinem on-device Apple-TTS:
 // Simon hat empirisch bestätigt (siehe Chat-Historie), dass viele User real
 // nur Apples Standard-Kompaktstimme zur Verfügung haben -- Enhanced/Premium-
 // Stimmen erfordern manuellen Download in den Systemeinstellungen (oft
@@ -32,16 +33,41 @@ import { checkRateLimit, resolveIdentity } from "../_shared/rateLimit.ts";
 import { checkAndReserveGoogleCloudSpend } from "../_shared/cloudSpendGuard.ts";
 
 const GOOGLE_TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize";
-// WaveNet (nicht Standard, nicht Neural2) -- das ist die Stufe, die im
-// Google-Cloud-Freikontingent (1 Mio. Zeichen/Monat) steckt. Live gegen
-// Googles voices:list-API verifiziert (Stand dieser Änderung): für de-DE
-// gibt es aktuell NUR de-DE-Wavenet-G (weiblich) und -H (männlich) --
-// ältere Namen wie -A bis -F tauchen dort nicht mehr auf.
-const VOICE_NAME = "de-DE-Wavenet-G";
 const LANGUAGE_CODE = "de-DE";
-// $4 pro 1 Mio. Zeichen (WaveNet-Preisstufe, siehe Chat-Historie) -- für die
-// Kostenschätzung des Spend-Guards unten.
-const PRICE_PER_CHAR_USD = 4 / 1_000_000;
+
+// Erlaubte Stimmen (Simon wählt in der App unter Profil -> Vorlesestimme).
+// Bewusst eine feste Liste statt beliebiger Namen: so kann niemand mit dem
+// öffentlichen anon-Key teure Stimmklassen (z.B. Studio) anfordern, und der
+// Kostendeckel kennt für jede Stimme den richtigen Preis. MUSS zur Liste in
+// Sources/TeachVoice/Core/CloudVoice.swift passen.
+//   - WaveNet: ältere Generation, $4 / 1 Mio. Zeichen (bisherige Standardstimme).
+//     Für de-DE gibt es nur noch -G (weiblich) und -H (männlich).
+//   - Chirp 3: HD: neueste, sehr natürliche Generation, $30 / 1 Mio. Zeichen
+//     (laut Googles Preisseite, Stand der Änderung). Format
+//     `de-DE-Chirp3-HD-<Name>`, Tempo per speakingRate (0.25-2.0) möglich.
+const WAVENET_PRICE_PER_CHAR_USD = 4 / 1_000_000;
+const CHIRP3_HD_PRICE_PER_CHAR_USD = 30 / 1_000_000;
+const ALLOWED_VOICES: Record<string, number> = {
+  "de-DE-Wavenet-G": WAVENET_PRICE_PER_CHAR_USD,
+  "de-DE-Wavenet-H": WAVENET_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Despina": CHIRP3_HD_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Aoede": CHIRP3_HD_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Kore": CHIRP3_HD_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Leda": CHIRP3_HD_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Zephyr": CHIRP3_HD_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Sulafat": CHIRP3_HD_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Charon": CHIRP3_HD_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Puck": CHIRP3_HD_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Fenrir": CHIRP3_HD_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Schedar": CHIRP3_HD_PRICE_PER_CHAR_USD,
+  "de-DE-Chirp3-HD-Umbriel": CHIRP3_HD_PRICE_PER_CHAR_USD,
+};
+// Ältere App-Versionen schicken keine Stimme mit -> bisherige Stimme.
+const DEFAULT_VOICE = "de-DE-Wavenet-G";
+// Sprechtempo (1.0 = normal). Bewusst enger als Googles Spanne, damit aus
+// der App nichts Unbrauchbares angefordert werden kann.
+const MIN_SPEAKING_RATE = 0.5;
+const MAX_SPEAKING_RATE = 1.5;
 
 const MAX_TEXT_LENGTH = 2_000; // weit mehr als jede Karteikarten-Frage/Ansage braucht
 // TTS wird pro vorgelesenem Text aufgerufen (nicht nur pro Bewertung wie bei
@@ -57,6 +83,8 @@ const CORS_HEADERS: Record<string, string> = {
 
 interface TTSRequest {
   text: string;
+  voice?: string;
+  speakingRate?: number;
 }
 
 interface TTSResponse {
@@ -88,16 +116,30 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: `text darf maximal ${MAX_TEXT_LENGTH} Zeichen haben.` }, 400);
     }
 
+    const voice = typeof body.voice === "string" ? body.voice : DEFAULT_VOICE;
+    // Object.hasOwn statt Index-Zugriff: sonst würden Namen wie "toString"
+    // geerbte Eigenschaften treffen.
+    const pricePerChar = Object.hasOwn(ALLOWED_VOICES, voice) ? ALLOWED_VOICES[voice] : undefined;
+    if (pricePerChar === undefined) {
+      return jsonResponse({ error: `Unbekannte Stimme "${voice}".` }, 400);
+    }
+    const speakingRate = body.speakingRate ?? 1;
+    if (typeof speakingRate !== "number" || !Number.isFinite(speakingRate) ||
+        speakingRate < MIN_SPEAKING_RATE || speakingRate > MAX_SPEAKING_RATE) {
+      return jsonResponse({ error: `speakingRate muss zwischen ${MIN_SPEAKING_RATE} und ${MAX_SPEAKING_RATE} liegen.` }, 400);
+    }
+
     // Harter, sofort wirksamer Ausgaben-Deckel -- Simons ausdrückliche
     // Vorgabe, das Google-Cloud-Testguthaben auf gar keinen Fall zu
-    // überschreiten. Läuft VOR dem eigentlichen (bezahlten) Google-Call.
-    const estimatedCost = body.text.length * PRICE_PER_CHAR_USD;
+    // überschreiten. Läuft VOR dem eigentlichen (bezahlten) Google-Call und
+    // rechnet mit dem Preis der gewählten Stimmklasse.
+    const estimatedCost = body.text.length * pricePerChar;
     const spendAllowed = await checkAndReserveGoogleCloudSpend(estimatedCost);
     if (!spendAllowed) {
       return jsonResponse({ error: "Cloud-Sprachausgabe momentan pausiert (internes Budget-Limit erreicht)." }, 503);
     }
 
-    const audioContent = await synthesize(body.text.trim());
+    const audioContent = await synthesize(body.text.trim(), voice, speakingRate);
     const response: TTSResponse = { audioContent };
     return jsonResponse(response, 200);
   } catch (err) {
@@ -114,7 +156,7 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
-async function synthesize(text: string): Promise<string> {
+async function synthesize(text: string, voice: string, speakingRate: number): Promise<string> {
   const apiKey = Deno.env.get("GOOGLE_TTS_API_KEY");
   if (!apiKey) throw new Error("GOOGLE_TTS_API_KEY ist nicht als Secret gesetzt.");
 
@@ -123,8 +165,8 @@ async function synthesize(text: string): Promise<string> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       input: { text },
-      voice: { languageCode: LANGUAGE_CODE, name: VOICE_NAME },
-      audioConfig: { audioEncoding: "MP3" },
+      voice: { languageCode: LANGUAGE_CODE, name: voice },
+      audioConfig: { audioEncoding: "MP3", speakingRate },
     }),
   });
 

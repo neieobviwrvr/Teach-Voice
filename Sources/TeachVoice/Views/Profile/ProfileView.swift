@@ -24,6 +24,14 @@ struct ProfileView: View {
     @AppStorage(Zielnote.speicherSchluessel) private var zielnoteWert = Zielnote.standardWert
     /// Nur zur Anzeige, gewählt wird in `VoicePickerView`.
     @AppStorage(VoicePreference.sourceKey) private var speechSource: SpeechSource = .google
+    @AppStorage(VoicePreference.googleVoiceKey) private var googleVoiceID: String = CloudVoice.standard.id
+
+    private var voiceSummary: String {
+        switch speechSource {
+        case .google: return "Google · \(CloudVoice.mitID(googleVoiceID)?.name ?? CloudVoice.standard.name)"
+        case .iphone: return "iPhone-Stimme"
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -33,7 +41,7 @@ struct ProfileView: View {
                         VoicePickerView()
                     } label: {
                         LabeledContent {
-                            Text(speechSource.label)
+                            Text(voiceSummary)
                         } label: {
                             Label("Vorlesestimme", systemImage: "waveform")
                         }

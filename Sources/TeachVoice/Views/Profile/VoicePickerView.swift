@@ -23,8 +23,10 @@ struct VoicePickerView: View {
     @State private var selectedIdentifier: String? = VoicePreference.selectedIdentifier
     /// App-weite Wahl Google- oder iPhone-Stimme (`VoicePreference.source`).
     @AppStorage(VoicePreference.sourceKey) private var source: SpeechSource = .google
-    /// Kennung für die Vorschau der Google-Stimme in `playingIdentifier`.
-    private let googlePreviewID = "google-preview"
+    /// Gewählte Google-Stimme (`VoicePreference.googleVoice`, gespeichert als ID).
+    @AppStorage(VoicePreference.googleVoiceKey) private var googleVoiceID: String = CloudVoice.standard.id
+    /// Sprechtempo für alle Stimmen (`VoicePreference.speakingRate`).
+    @AppStorage(VoicePreference.speakingRateKey) private var speakingRate: Double = 1.0
     // Getrennt von `previewSpeech.isSpeaking` (das ist nur EIN gemeinsamer
     // Bool für den ganzen Service) -- ohne dieses Feld würden beim Abspielen
     // EINER Stimme ALLE Zeilen gleichzeitig das "spielt ab"-Icon zeigen.
@@ -72,6 +74,7 @@ struct VoicePickerView: View {
     var body: some View {
         List {
             sourceSection
+            googleVoicesSection
 
             Section {
                 automaticRow
@@ -146,8 +149,8 @@ struct VoicePickerView: View {
         }
     }
 
-    /// Der app-weite Schalter Google- oder iPhone-Stimme, plus Vorschau der
-    /// Google-Stimme zum direkten Vergleich mit den iPhone-Stimmen unten.
+    /// Der app-weite Schalter Google- oder iPhone-Stimme und der Tempo-Regler
+    /// (gilt für beide), plus "Anhören" mit genau der aktuellen Einstellung.
     private var sourceSection: some View {
         Section {
             Picker("Vorlesen mit", selection: $source) {
@@ -157,19 +160,74 @@ struct VoicePickerView: View {
             }
             .pickerStyle(.segmented)
 
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Tempo: \(VoicePreference.rateLabel(speakingRate))")
+                Slider(
+                    value: $speakingRate,
+                    in: VoicePreference.minSpeakingRate...VoicePreference.maxSpeakingRate,
+                    step: VoicePreference.speakingRateStep
+                ) {
+                    Text("Tempo")
+                } minimumValueLabel: {
+                    Image(systemName: "tortoise")
+                } maximumValueLabel: {
+                    Image(systemName: "hare")
+                }
+            }
+
             Button {
-                playingIdentifier = googlePreviewID
-                previewSpeech.speak(sampleText, source: .google)
+                playingIdentifier = "aktuell"
+                previewSpeech.speak(sampleText)
             } label: {
-                let isPlaying = previewSpeech.isSpeaking && playingIdentifier == googlePreviewID
-                Label("Google-Stimme anhören", systemImage: isPlaying ? "speaker.wave.2.fill" : "play.circle")
+                let isPlaying = previewSpeech.isSpeaking && playingIdentifier == "aktuell"
+                Label("Aktuelle Einstellung anhören", systemImage: isPlaying ? "speaker.wave.2.fill" : "play.circle")
             }
         } header: {
             Text("Vorlesen mit")
         } footer: {
             Text(source == .google
-                 ? "Google-Stimme: über das Internet, kostet pro Zeichen (im Freikontingent). Ohne Internet springt die iPhone-Stimme ein."
-                 : "iPhone-Stimme: kostenlos, funktioniert offline und startet ohne Ladepause. Am natürlichsten klingt eine heruntergeladene Premium-Stimme.")
+                 ? "Google-Stimme: über das Internet, kostet pro Zeichen. Ohne Internet springt die iPhone-Stimme ein. Das Tempo gilt für beide (1,00× = normal)."
+                 : "iPhone-Stimme: kostenlos, funktioniert offline und startet ohne Ladepause. Das Tempo gilt für beide (1,00× = normal).")
+        }
+    }
+
+    /// Alle Google-Stimmen, die der Server erlaubt (`CloudVoice.alle`), mit
+    /// Vorschau im eingestellten Tempo.
+    private var googleVoicesSection: some View {
+        Section {
+            ForEach(CloudVoice.alle) { voice in
+                HStack {
+                    Button {
+                        googleVoiceID = voice.id
+                    } label: {
+                        HStack {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(voice.name).font(.body)
+                                Text(voice.beschreibung).font(.caption).foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                            if googleVoiceID == voice.id {
+                                Image(systemName: "checkmark").foregroundStyle(Color.accentColor)
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        playingIdentifier = voice.id
+                        previewSpeech.speak(sampleText, source: .google, googleVoice: voice)
+                    } label: {
+                        let isPlaying = previewSpeech.isSpeaking && playingIdentifier == voice.id
+                        Image(systemName: isPlaying ? "speaker.wave.2.fill" : "play.circle")
+                            .font(.title3)
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+        } header: {
+            Text("Google-Stimme")
+        } footer: {
+            Text("Chirp 3 HD ist die neueste, natürlichste Google-Generation (kostet pro Zeichen etwa siebenmal so viel wie WaveNet). Einmal vorgelesene Fragen speichert die App zwischen, getrennt nach Stimme und Tempo.")
         }
     }
 

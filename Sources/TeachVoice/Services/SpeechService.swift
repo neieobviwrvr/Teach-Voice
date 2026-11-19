@@ -62,14 +62,15 @@ final class SpeechService: NSObject, ObservableObject {
     /// vorspielen will. Normale Aufrufstellen lassen den Parameter weg und
     /// bekommen den Cloud-Pfad (mit lokalem Fallback bei Fehler).
     ///
-    /// `source` überschreibt die app-weite Einstellung (`VoicePreference.source`)
-    /// für genau diese Ansage -- nur für den "Google-Stimme anhören"-Button in
-    /// `VoicePickerView`, damit man beide Varianten vergleichen kann.
+    /// `source` und `googleVoice` überschreiben die app-weiten Einstellungen
+    /// (`VoicePreference`) für genau diese Ansage -- nur für die Vorschau-
+    /// Buttons in `VoicePickerView`, damit man Stimmen vergleichen kann.
     func speak(
         _ text: String,
         voice: AVSpeechSynthesisVoice? = nil,
         languageHint: String? = nil,
-        source: SpeechSource? = nil
+        source: SpeechSource? = nil,
+        googleVoice: CloudVoice? = nil
     ) {
         guard !text.isEmpty else { return }
         stop()
@@ -88,8 +89,12 @@ final class SpeechService: NSObject, ObservableObject {
         // tatsächlich eintrifft) -- sonst würde z.B. ein "Spielt ab…"-Button
         // während des kurzen Netzwerk-Ladens fälschlich "Vorlesen" anzeigen.
         isSpeaking = true
+        let cloudVoice = googleVoice ?? VoicePreference.googleVoice
+        let rate = VoicePreference.speakingRate
         cloudTask = Task { [weak self] in
-            await self?.speakPreferCloud(text, languageHint: languageHint, generation: myGeneration)
+            await self?.speakPreferCloud(
+                text, languageHint: languageHint, cloudVoice: cloudVoice, rate: rate, generation: myGeneration
+            )
         }
     }
 
@@ -103,13 +108,17 @@ final class SpeechService: NSObject, ObservableObject {
     func prefetch(_ texts: [String]) async {
         // Mit iPhone-Stimme gibt es nichts zu laden (und nichts zu bezahlen).
         guard VoicePreference.source == .google else { return }
-        let voiceKey = CloudSpeechConfig.voiceIdentifier
+        let cloudVoice = VoicePreference.googleVoice
+        let rate = VoicePreference.speakingRate
+        let voiceKey = CloudSpeechConfig.cacheKey(voice: cloudVoice, speakingRate: rate)
         for text in texts where !text.isEmpty {
             if Task.isCancelled { return }
             guard AudioFileCache.cachedFileURL(text: text, voice: voiceKey) == nil else { continue }
             do {
                 let token = await auth.validAccessToken()
-                let data = try await CloudSpeechService.synthesize(text: text, accessToken: token)
+                let data = try await CloudSpeechService.synthesize(
+                    text: text, voice: cloudVoice, speakingRate: rate, accessToken: token
+                )
                 _ = AudioFileCache.store(data, text: text, voice: voiceKey)
             } catch {
                 return
@@ -148,8 +157,14 @@ final class SpeechService: NSObject, ObservableObject {
 
     // MARK: - Cloud-Pfad
 
-    private func speakPreferCloud(_ text: String, languageHint: String?, generation myGeneration: Int) async {
-        let voiceKey = CloudSpeechConfig.voiceIdentifier
+    private func speakPreferCloud(
+        _ text: String,
+        languageHint: String?,
+        cloudVoice: CloudVoice,
+        rate: Double,
+        generation myGeneration: Int
+    ) async {
+        let voiceKey = CloudSpeechConfig.cacheKey(voice: cloudVoice, speakingRate: rate)
 
         if let cached = AudioFileCache.cachedFileURL(text: text, voice: voiceKey) {
             playCloudAudio(fileURL: cached, text: text, languageHint: languageHint, generation: myGeneration)
@@ -158,7 +173,9 @@ final class SpeechService: NSObject, ObservableObject {
 
         do {
             let token = await auth.validAccessToken()
-            let data = try await CloudSpeechService.synthesize(text: text, accessToken: token)
+            let data = try await CloudSpeechService.synthesize(
+                text: text, voice: cloudVoice, speakingRate: rate, accessToken: token
+            )
             // Auch eine inzwischen überholte Antwort landet im Cache -- sie
             // ist bezahlt und wird beim nächsten Mal gebraucht --, wird aber
             // nicht mehr abgespielt (Prüfung in `playCloudAudio`).
@@ -218,7 +235,9 @@ final class SpeechService: NSObject, ObservableObject {
     private func makeUtterance(_ text: String, voice: AVSpeechSynthesisVoice? = nil, languageHint: String? = nil) -> AVSpeechUtterance {
         let utterance = AVSpeechUtterance(string: text)
         utterance.voice = voice ?? Self.preferredVoice(languageCode: languageHint ?? detectedLanguage(for: text))
-        utterance.rate = AVSpeechUtteranceDefaultSpeechRate
+        // Gleicher Tempo-Regler wie bei der Google-Stimme (1.0 = normal).
+        let scaled = AVSpeechUtteranceDefaultSpeechRate * Float(VoicePreference.speakingRate)
+        utterance.rate = min(max(scaled, AVSpeechUtteranceMinimumSpeechRate), AVSpeechUtteranceMaximumSpeechRate)
         return utterance
     }
 

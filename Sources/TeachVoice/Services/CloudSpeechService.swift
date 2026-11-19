@@ -1,16 +1,18 @@
 import Foundation
 
-/// Muss mit `VOICE_NAME` in `text-to-speech/index.ts` übereinstimmen -- dient
-/// hier nur als Cache-Schlüssel-Bestandteil (siehe `AudioFileCache`), nicht
-/// als tatsächlicher Request-Parameter (die Stimme ist serverseitig fest
-/// hinterlegt, nicht vom Client wählbar -- anders als bei den lokalen
-/// Apple-Stimmen in `VoicePickerView`).
 enum CloudSpeechConfig {
-    static let voiceIdentifier = "google:de-DE-Wavenet-F"
+    /// Cache-Schlüssel-Bestandteil für `AudioFileCache`: Stimme UND Tempo.
+    /// Ändert der User eines von beiden, wird neu geladen statt eine alte
+    /// Aufnahme (andere Stimme, anderes Tempo) abzuspielen.
+    static func cacheKey(voice: CloudVoice, speakingRate: Double) -> String {
+        "google:\(voice.id)@\(String(format: "%.2f", VoicePreference.normalizedRate(speakingRate)))"
+    }
 }
 
 private struct TTSRequestBody: Encodable {
     let text: String
+    let voice: String
+    let speakingRate: Double
 }
 
 private struct TTSResponseBody: Decodable {
@@ -22,11 +24,11 @@ enum CloudSpeechError: Error {
 }
 
 /// Ruft die zustandslose Supabase Edge Function `text-to-speech` auf (Google
-/// Cloud TTS, WaveNet). Gleiches Auth-/Fehler-Muster wie `GradingService` --
-/// bei Gästen wird der `anon`-Key als Bearer mitgeschickt statt eines echten
-/// User-Tokens.
+/// Cloud TTS, gewählte Stimme aus `CloudVoice.alle`, gewähltes Tempo).
+/// Gleiches Auth-/Fehler-Muster wie `GradingService` -- bei Gästen wird der
+/// `anon`-Key als Bearer mitgeschickt statt eines echten User-Tokens.
 enum CloudSpeechService {
-    static func synthesize(text: String, accessToken: String?) async throws -> Data {
+    static func synthesize(text: String, voice: CloudVoice, speakingRate: Double, accessToken: String?) async throws -> Data {
         var request = URLRequest(url: SupabaseConfig.url.appendingPathComponent("functions/v1/text-to-speech"))
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -38,7 +40,9 @@ enum CloudSpeechService {
         // Hands-free-Modus lange in Stille warten zu lassen.
         request.timeoutInterval = 10
 
-        request.httpBody = try JSONEncoder().encode(TTSRequestBody(text: text))
+        request.httpBody = try JSONEncoder().encode(
+            TTSRequestBody(text: text, voice: voice.id, speakingRate: VoicePreference.normalizedRate(speakingRate))
+        )
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.invalidResponse }
