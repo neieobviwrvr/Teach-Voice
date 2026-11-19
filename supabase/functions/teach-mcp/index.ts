@@ -4,8 +4,12 @@
 // Bibliothek eines Nutzers ansehen und neue Ordner, Unterordner und
 // Karteikarten anlegen. Die App liest die Karten danach ganz normal aus Supabase.
 //
-// v1 kann bewusst nur LESEN und NEU ANLEGEN (Simons Entscheidung): kein
-// Ändern, kein Löschen -- ein Fehler der KI kann so nichts kaputtmachen.
+// Bewusst nur LESEN und NEU ANLEGEN (Simons Entscheidung): kein Ändern von
+// Frage/Antwort, kein Löschen -- ein Fehler der KI kann so nichts
+// kaputtmachen. Einzige Ausnahme (von Simon am 19.11.2026 freigegeben):
+// `set_kontrollpunkte` setzt die BEWERTUNGSPUNKTE bestehender Karten, damit
+// Claude Karten ohne Kontrollpunkte nachrüsten kann. Frage und Antwort fasst
+// auch dieses Werkzeug nicht an.
 //
 // Anmeldung: persönlicher Schlüssel (`tvk_…`), den die App über die Edge
 // Function `connector-key` erzeugt. Hauptweg ist der "persönliche
@@ -83,7 +87,9 @@ Ablauf:
 3. Vor dem Ergänzen eines bestehenden Unterordners list_flashcards aufrufen, um Doppelungen zu vermeiden.
 4. Mit add_flashcards die Karten anlegen (höchstens ${MAX_CARDS_PER_CALL} pro Aufruf, bei mehr einfach mehrere Aufrufe).
 
-Der Konnektor kann keine bestehenden Karten ändern oder löschen. Das geht nur in der App.`;
+Ältere Karten ohne Kontrollpunkte (in list_flashcards "kontrollpunkte": null) kannst du mit set_kontrollpunkte nachrüsten -- dieselben Regeln wie bei add_flashcards.
+
+Frage und Antwort bestehender Karten kann der Konnektor nicht ändern, und löschen kann er nichts. Das geht nur in der App.`;
 
 const CARD_STYLE_GUIDE = `So entstehen gute Karten für Teach:
 - Frage: eine klare, eigenständige Frage, die sich gut vorlesen lässt (keine Tabellen, keine Formelnotation, Abkürzungen ausschreiben). Sie muss erkennen lassen, wie viel erwartet wird (z.B. "Nenne zwei Grenzen ..." statt nur "Grenzen?").
@@ -248,6 +254,7 @@ interface SubfolderRow {
 }
 
 interface CardRow {
+  id: string;
   subfolder_id: string;
   question: string;
   answer: string;
@@ -358,6 +365,7 @@ function buildServer(userId: string): McpServer {
         unterordner: subfolder.name,
         karten: cards.map((c, i) => ({
           nr: i + 1,
+          id: c.id,
           frage: c.question,
           antwort: c.answer,
           // null = noch keine festgelegten Kontrollpunkte (z.B. in der App
@@ -543,6 +551,114 @@ function buildServer(userId: string): McpServer {
     })
   );
 
+  // --- Kontrollpunkte nachrüsten (einzige Änderung an bestehenden Karten) ---
+
+  server.registerTool(
+    "set_kontrollpunkte",
+    {
+      title: "Kontrollpunkte bestehender Karten setzen",
+      description: `Setzt die Kontrollpunkte (Bewertungsgrundlage) bestehender Karten eines Unterordners, z.B. für ältere Karten, die noch keine haben ("kontrollpunkte": null in list_flashcards). Frage und Musterantwort werden NICHT verändert. Vorhandene Kontrollpunkte einer Karte werden ersetzt. Vorher list_flashcards aufrufen, um IDs, Fragen und Antworten zu sehen. Höchstens ${MAX_CARDS_PER_CALL} Karten pro Aufruf.
+
+Die Kontrollpunkte müssen zur jeweiligen Musterantwort passen und denselben Regeln folgen wie bei add_flashcards:
+1. Jeder Punkt ist EINE eigenständige Aussage, die man unabhängig von den anderen wissen oder nicht wissen kann.
+2. KEINE ÜBERSCHNEIDUNGEN: Was im Kern dasselbe meint, ist EIN Punkt.
+3. Meist 1-4 Punkte, höchstens 6.
+4. Nur Wesentliches, das auch in der Musterantwort steht; Beispiele und Nebendetails gehören zum Punkt, den sie erläutern.
+5. Kurz formuliert (höchstens ~15 Wörter), reiner Text ohne "**" oder "- ".`,
+      inputSchema: z.object({
+        subfolder_id: z.uuid().describe("ID des Unterordners aus list_library"),
+        karten: z
+          .array(
+            z.object({
+              id: z.uuid().describe("ID der Karte aus list_flashcards"),
+              kontrollpunkte: z
+                .array(z.string().trim().min(2).max(MAX_KONTROLLPUNKT_LENGTH))
+                .min(1)
+                .max(MAX_KONTROLLPUNKTE)
+                .describe("1-6 eigenständige, sich nicht überschneidende Kontrollpunkte"),
+            })
+          )
+          .min(1)
+          .max(MAX_CARDS_PER_CALL),
+      }),
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    safe(async ({ subfolder_id, karten }: { subfolder_id: string; karten: { id: string; kontrollpunkte: string[] }[] }) => {
+      const subfolder = await ownedSubfolder(userId, subfolder_id);
+      if (!subfolder) return errorResult("Unterordner nicht gefunden. Rufe list_library auf, um die gültigen IDs zu sehen.");
+
+      // Nur Karten dieses Nutzers UND dieses Unterordners -- fremde oder
+      // falsch zugeordnete IDs werden gemeldet statt still übergangen.
+      const existing = await cardsIn(userId, subfolder_id);
+      const byId = new Map(existing.map((card) => [card.id, card]));
+
+      const unbekannt: string[] = [];
+      const ohnePunkte: string[] = [];
+      const updates: { card: CardRow; kontrollpunkte: string[] }[] = [];
+      const seenIds = new Set<string>();
+      for (const eintrag of karten) {
+        const card = byId.get(eintrag.id);
+        if (!card) {
+          unbekannt.push(eintrag.id);
+          continue;
+        }
+        if (seenIds.has(card.id)) continue;
+        seenIds.add(card.id);
+        const kontrollpunkte = cleanKontrollpunkte(eintrag.kontrollpunkte);
+        if (kontrollpunkte.length === 0) {
+          ohnePunkte.push(card.question);
+          continue;
+        }
+        updates.push({ card, kontrollpunkte });
+      }
+
+      if (unbekannt.length > 0 || ohnePunkte.length > 0) {
+        return errorResult(
+          "Nichts geändert: " +
+            [
+              unbekannt.length > 0
+                ? `${unbekannt.length} Karten-ID(s) gehören nicht zu diesem Unterordner (z.B. ${unbekannt[0]}). Rufe list_flashcards für den richtigen Unterordner auf.`
+                : "",
+              ohnePunkte.length > 0
+                ? `${ohnePunkte.length} Karte(n) ohne gültige Kontrollpunkte (z.B. "${ohnePunkte[0]}").`
+                : "",
+            ]
+              .filter(Boolean)
+              .join(" ")
+        );
+      }
+
+      // Hash passend zur GESPEICHERTEN Antwort (Core/TextHash.swift), damit
+      // die App die Punkte als gültig erkennt. Ändert der Nutzer die Antwort
+      // später in der App, passt der Hash nicht mehr und die Punkte werden
+      // dort automatisch neu abgeleitet.
+      const ergebnisse = await Promise.allSettled(
+        updates.map(async ({ card, kontrollpunkte }) =>
+          serviceRest<null>(`flashcards?id=eq.${card.id}&user_id=eq.${userId}&subfolder_id=eq.${subfolder_id}`, {
+            method: "PATCH",
+            body: { kernelemente: kontrollpunkte, kernelemente_source_hash: await answerHash(card.answer) },
+            prefer: "return=minimal",
+          })
+        )
+      );
+      const fehlgeschlagen = ergebnisse.filter((r) => r.status === "rejected");
+      if (fehlgeschlagen.length > 0) {
+        console.error("teach-mcp set_kontrollpunkte:", (fehlgeschlagen[0] as PromiseRejectedResult).reason);
+        return errorResult(
+          `Technischer Fehler: ${updates.length - fehlgeschlagen.length} von ${updates.length} Karten wurden aktualisiert. ` +
+            "Ein erneuter Aufruf mit denselben Karten ist gefahrlos (die Punkte werden einfach neu gesetzt)."
+        );
+      }
+
+      const nochOhne = existing.filter((card) => !seenIds.has(card.id) && !Array.isArray(card.kernelemente)).length;
+      return textResult({
+        aktualisiert: updates.length,
+        unterordner: subfolder.name,
+        karten_ohne_kontrollpunkte_uebrig: nochOhne,
+      });
+    })
+  );
+
   return server;
 }
 
@@ -557,7 +673,7 @@ async function ownedSubfolder(userId: string, subfolderId: string): Promise<Subf
 
 async function cardsIn(userId: string, subfolderId: string): Promise<CardRow[]> {
   return await serviceRest<CardRow[]>(
-    `flashcards?subfolder_id=eq.${subfolderId}&user_id=eq.${userId}&select=subfolder_id,question,answer,kernelemente&order=position.asc,created_at.asc`
+    `flashcards?subfolder_id=eq.${subfolderId}&user_id=eq.${userId}&select=id,subfolder_id,question,answer,kernelemente&order=position.asc,created_at.asc`
   );
 }
 
