@@ -24,6 +24,7 @@ struct AnkiStudyView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                PendingReviewsBanner()
                 if let card = queue.current {
                     countersRow
                     cardView(card)

@@ -4,7 +4,7 @@ import Foundation
 /// - Tipp-Modus (Anki-Stil): alle vier Buttons Nochmal/Schwer/Gut/Einfach.
 /// - Sprach-Modus: drei Buttons, Falsch = Again, Teilweise = Hard (zählt in
 ///   FSRS als "gerade noch gewusst"), Richtig = Good.
-enum FSRSRating: Int, CaseIterable {
+enum FSRSRating: Int, CaseIterable, Codable {
     case again = 1, hard = 2, good = 3, easy = 4
 
     init(_ urteil: GradingResult.Urteil) {
@@ -135,7 +135,7 @@ struct FSRS {
 }
 
 /// Lernzustand einer Karte für FSRS.
-struct FSRSCardState: Equatable {
+struct FSRSCardState: Equatable, Codable {
     var stability: Double?
     var difficulty: Double?
     var lastReview: Date?

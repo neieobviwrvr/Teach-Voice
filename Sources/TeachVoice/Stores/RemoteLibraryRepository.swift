@@ -58,6 +58,7 @@ private struct ReviewLogBody: Encodable {
     let userId: UUID
     let log: NewReviewLog
     enum CodingKeys: String, CodingKey {
+        case id
         case userId = "user_id"
         case flashcardId = "flashcard_id"
         case rating
@@ -71,6 +72,9 @@ private struct ReviewLogBody: Encodable {
 
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        // Feste ID aus der App: ein zweiter Versuch ergibt 409 statt eines
+        // doppelten Eintrags (siehe `PendingReviewRetry`).
+        try container.encode(log.id, forKey: .id)
         try container.encode(userId, forKey: .userId)
         try container.encode(log.flashcardId, forKey: .flashcardId)
         try container.encode(log.rating.rawValue, forKey: .rating)
@@ -100,9 +104,14 @@ private struct ExamDatePatch: Encodable {
 /// RLS-geschützt pro eingeloggtem User. Genutzt für den E-Mail/Passwort-Login.
 final class RemoteLibraryRepository: LibraryRepository {
     private let auth: AuthManager
+    let ownerKey: String
 
+    /// `@MainActor`, weil die User-ID aus `AuthManager` gelesen wird (wird
+    /// nur von `RootView` erzeugt, und zwar erst, wenn eingeloggt).
+    @MainActor
     init(auth: AuthManager) {
         self.auth = auth
+        self.ownerKey = "cloud:\(auth.session?.userId.uuidString ?? "unbekannt")"
     }
 
     private func context() async throws -> (token: String, userId: UUID) {

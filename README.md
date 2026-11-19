@@ -44,6 +44,8 @@ In jedem Ordner und Unterordner gibt es **Statistik** (`Views/Study/StatisticsVi
 
 Dafür wird jede Bewertung in `review_logs` protokolliert (Gastmodus: lokal im Snapshot). Das ist zugleich die Datengrundlage, um FSRS später auf das persönliche Gedächtnis zu trainieren.
 
+**Kein Lernstand geht verloren:** Jede Bewertung wird sofort nach dem Tippen erst auf dem iPhone vorgemerkt und dann im Hintergrund gespeichert (`Core/PendingReviewQueue.swift`). Ohne Netz bleibt sie vorgemerkt und wird nachgeholt, sobald wieder Netz da ist; solange zeigt die App „… wird nachgeholt“.
+
 ## KI-Konnektor (Claude)
 
 Claude kann über einen eigenen MCP-Konnektor (Edge Function `supabase/functions/teach-mcp`) direkt Ordner, Unterordner und Karteikarten in die eigene Teach-Bibliothek schreiben, z.B. „Mach mir 10 Karten zu Kapitel 3 in den Unterordner Sozialpsychologie“. Die App zeigt die neuen Karten beim nächsten Laden an (auch automatisch beim Zurückwechseln in die App).

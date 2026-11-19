@@ -13,6 +13,7 @@ final class LocalLibraryRepository: LibraryRepository {
     }
 
     private let userId = GuestIdentity.id
+    var ownerKey: String { "guest:\(userId.uuidString)" }
     private let fileURL: URL
     private var snapshot: Snapshot
 
@@ -168,8 +169,10 @@ final class LocalLibraryRepository: LibraryRepository {
     }
 
     func insertReviewLog(_ log: NewReviewLog) async throws {
+        // Wiederholter Speicherversuch derselben Bewertung: nichts doppelt.
+        guard !(snapshot.reviewLogs ?? []).contains(where: { $0.id == log.id }) else { return }
         let entry = ReviewLog(
-            id: UUID(), userId: userId, flashcardId: log.flashcardId, rating: log.rating.rawValue,
+            id: log.id, userId: userId, flashcardId: log.flashcardId, rating: log.rating.rawValue,
             reviewedAt: log.reviewedAt, mode: log.mode.logValue, elapsedDays: log.elapsedDays,
             intervalDays: log.intervalDays, stability: log.stability, difficulty: log.difficulty,
             deckungProzent: log.deckungProzent

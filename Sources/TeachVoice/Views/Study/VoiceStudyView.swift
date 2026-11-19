@@ -88,6 +88,7 @@ struct VoiceStudyView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
+                PendingReviewsBanner()
                 if let preparationError {
                     preparationFailedView(preparationError)
                 } else if phase == .vorbereiten {

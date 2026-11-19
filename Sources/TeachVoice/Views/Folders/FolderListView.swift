@@ -134,6 +134,13 @@ struct FolderListView: View {
     @ViewBuilder
     private var mainList: some View {
         List {
+            if library.pendingReviewCount > 0 {
+                Section {
+                    PendingReviewsBanner()
+                        .listRowBackground(Color.clear)
+                }
+            }
+
             heroSection
 
             if mode == .guest {

@@ -137,9 +137,11 @@ struct ReviewLog: Codable, Identifiable, Hashable {
     }
 }
 
-/// Die Daten eines neuen Lernverlauf-Eintrags (ohne ID/User, die setzt das
-/// Repository).
-struct NewReviewLog: Equatable {
+/// Die Daten eines neuen Lernverlauf-Eintrags (ohne User, den setzt das
+/// Repository). Die `id` entsteht schon in der App, damit ein wiederholter
+/// Speicherversuch (`PendingReviewQueue`) keinen doppelten Eintrag erzeugt.
+struct NewReviewLog: Equatable, Codable {
+    let id: UUID
     let flashcardId: UUID
     let rating: FSRSRating
     let reviewedAt: Date

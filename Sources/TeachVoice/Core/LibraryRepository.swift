@@ -9,6 +9,11 @@ import Foundation
 /// Protokoll – die Views selbst müssen nicht wissen, ob gerade Gast- oder
 /// Cloud-Modus aktiv ist.
 protocol LibraryRepository: AnyObject {
+    /// Eindeutig pro Konto ("cloud:<userId>" bzw. "guest:<id>"). Noch nicht
+    /// gespeicherte Bewertungen (`PendingReviewQueue`) werden nur in das Konto
+    /// nachgeholt, in dem sie entstanden sind.
+    var ownerKey: String { get }
+
     func fetchFolders() async throws -> [Folder]
     func insertFolder(name: String) async throws -> Folder
     func renameFolder(id: UUID, name: String) async throws -> Folder
@@ -33,7 +38,8 @@ protocol LibraryRepository: AnyObject {
     /// Wiederholungen, Fälligkeit, letzte Wiederholung).
     func updateFlashcardReview(id: UUID, state: FSRSCardState) async throws -> Flashcard
 
-    /// Protokolliert eine einzelne Bewertung (Lernverlauf).
+    /// Protokolliert eine einzelne Bewertung (Lernverlauf). Ein zweiter
+    /// Versuch mit derselben `log.id` darf keinen doppelten Eintrag erzeugen.
     func insertReviewLog(_ log: NewReviewLog) async throws
     /// Lernverlauf ab `since`, älteste zuerst.
     func fetchReviewLogs(since: Date) async throws -> [ReviewLog]

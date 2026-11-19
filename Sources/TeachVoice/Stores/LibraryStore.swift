@@ -1,4 +1,5 @@
 import Foundation
+import Network
 
 /// Hält Ordner/Unterordner/Karteikarten lokal (für die UI) vor und delegiert
 /// alle Lese-/Schreibzugriffe an ein `LibraryRepository` – je nach Modus
@@ -11,11 +12,34 @@ final class LibraryStore: ObservableObject {
     @Published private(set) var flashcards: [UUID: [Flashcard]] = [:]
     @Published var errorMessage: String?
     @Published var isLoading = false
+    /// Bewertungen des aktuellen Kontos, die noch nicht gespeichert werden
+    /// konnten (z.B. kein Netz) und nachgeholt werden -- für den Hinweis
+    /// `PendingReviewsBanner`.
+    @Published private(set) var pendingReviewCount = 0
 
     private var repository: LibraryRepository
 
+    /// Jede Bewertung geht zuerst in diese Schlange (auf dem Gerät
+    /// gespeichert) und wird von dort gespeichert bzw. nachgeholt.
+    private var pendingReviews = PendingReviewQueue.load() {
+        didSet {
+            pendingReviews.save()
+            pendingReviewCount = pendingReviews.count(for: repository.ownerKey)
+        }
+    }
+    private var isFlushingPendingReviews = false
+    /// Holt offene Bewertungen nach, sobald das Netz zurück ist.
+    private let pathMonitor = NWPathMonitor()
+
     init(repository: LibraryRepository) {
         self.repository = repository
+        pendingReviewCount = pendingReviews.count(for: repository.ownerKey)
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            guard path.status == .satisfied else { return }
+            Task { @MainActor in await self?.flushPendingReviews() }
+        }
+        // Läuft so lange wie die App (der Store lebt app-weit).
+        pathMonitor.start(queue: DispatchQueue(label: "teachvoice.network-monitor"))
     }
 
     /// Wechselt die Datenquelle (z.B. Gast -> eingeloggt) und leert den lokalen
@@ -26,6 +50,8 @@ final class LibraryStore: ObservableObject {
         subfolders = [:]
         flashcards = [:]
         errorMessage = nil
+        pendingReviewCount = pendingReviews.count(for: repository.ownerKey)
+        Task { await flushPendingReviews() }
     }
 
     func subfolders(in folder: Folder) -> [Subfolder] { subfolders[folder.id] ?? [] }
@@ -71,6 +97,8 @@ final class LibraryStore: ObservableObject {
         defer { isLoading = false }
         do {
             folders = try await repository.fetchFolders()
+            // Server erreichbar -> gute Gelegenheit, Offenes nachzuholen.
+            if pendingReviewCount > 0 { Task { await flushPendingReviews() } }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -163,7 +191,11 @@ final class LibraryStore: ObservableObject {
 
     func loadFlashcards(for subfolder: Subfolder) async {
         do {
-            flashcards[subfolder.id] = try await repository.fetchFlashcards(subfolderId: subfolder.id)
+            let loaded = try await repository.fetchFlashcards(subfolderId: subfolder.id)
+            // Noch nicht gespeicherte Bewertungen sind neuer als der Server-
+            // Stand -- sonst würde ein Neuladen sie in der App "zurückdrehen".
+            flashcards[subfolder.id] = loaded.map(applyingPendingState)
+            if pendingReviewCount > 0 { Task { await flushPendingReviews() } }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -283,6 +315,12 @@ final class LibraryStore: ObservableObject {
 
     /// Wie oben, mit einer der vier FSRS-Bewertungen (Tipp-Modus). Schreibt
     /// zusätzlich einen Eintrag in den Lernverlauf (`review_logs`).
+    ///
+    /// Speichern ohne Datenverlust: Die Bewertung landet zuerst in der
+    /// Warteschlange auf dem Gerät (`PendingReviewQueue`), die App zeigt den
+    /// neuen Stand sofort, und gespeichert wird im Hintergrund. Klappt das
+    /// nicht (kein Netz), wird es nachgeholt -- beim nächsten Netz-Wechsel,
+    /// Laden oder Bewerten. Das Lernen wartet nie auf den Server.
     @discardableResult
     func recordSpacedRepetitionOutcome(
         for flashcard: Flashcard,
@@ -294,33 +332,90 @@ final class LibraryStore: ObservableObject {
         let before = flashcard.fsrsState
         let outcome = FSRSScheduler.review(before, rating: rating, now: now, examDate: examDate(for: flashcard))
 
-        // Lernverlauf: unabhängig davon, ob das Speichern des Kartenstands
-        // klappt -- und ein Fehler hier soll das Lernen nie stören.
         let elapsed = before.lastReview.map {
             FSRSScheduler.learningDay(now, calendar: .current) - FSRSScheduler.learningDay($0, calendar: .current)
         }
         let log = NewReviewLog(
-            flashcardId: flashcard.id, rating: rating, reviewedAt: now, mode: mode,
+            id: UUID(), flashcardId: flashcard.id, rating: rating, reviewedAt: now, mode: mode,
             elapsedDays: before.isNew ? nil : elapsed, intervalDays: outcome.intervalDays,
             stability: outcome.state.stability ?? 0, difficulty: outcome.state.difficulty ?? 0,
             deckungProzent: percent
         )
-        do {
-            try await repository.insertReviewLog(log)
-        } catch {
-            print("Lernverlauf-Eintrag fehlgeschlagen: \(error.localizedDescription)")
-        }
 
-        do {
-            let updated = try await repository.updateFlashcardReview(id: flashcard.id, state: outcome.state)
-            if var list = flashcards[flashcard.subfolderId], let idx = list.firstIndex(where: { $0.id == flashcard.id }) {
-                list[idx] = updated
-                flashcards[flashcard.subfolderId] = list
+        pendingReviews.enqueue(PendingReview(
+            id: UUID(), ownerKey: repository.ownerKey, flashcardId: flashcard.id,
+            subfolderId: flashcard.subfolderId, state: outcome.state, log: log, createdAt: now
+        ))
+
+        var updated = flashcard
+        updated.apply(outcome.state)
+        replaceInCache(updated)
+
+        Task { await flushPendingReviews() }
+        return updated
+    }
+
+    // MARK: - Offene Bewertungen nachholen
+
+    /// Speichert alle offenen Bewertungen des aktuellen Kontos, älteste
+    /// zuerst. Bricht beim ersten vorübergehenden Fehler ab (kein Netz ->
+    /// alle weiteren würden genauso scheitern) und versucht es beim nächsten
+    /// Anlass erneut.
+    func flushPendingReviews() async {
+        guard !isFlushingPendingReviews else { return }
+        isFlushingPendingReviews = true
+        defer { isFlushingPendingReviews = false }
+
+        let repo = repository
+        let owner = repo.ownerKey
+        pendingReviews.pruneExpired()
+
+        // Liest die Schlange in jeder Runde neu, damit auch Bewertungen
+        // drankommen, die während des Speicherns dazukommen. Die Obergrenze
+        // ist nur ein Sicherheitsnetz gegen eine Endlosschleife.
+        for _ in 0..<500 {
+            // Konto gewechselt -> nichts mehr in dieses Repository schreiben.
+            guard repo === repository, let item = pendingReviews.next(for: owner) else { return }
+
+            if let state = item.state {
+                do {
+                    let saved = try await repo.updateFlashcardReview(id: item.flashcardId, state: state)
+                    pendingReviews.markStateDone(item.id)
+                    // Nur übernehmen, wenn inzwischen keine neuere Bewertung
+                    // dieser Karte wartet.
+                    if repo === repository, pendingReviews.pendingState(for: item.flashcardId, owner: owner) == nil {
+                        replaceInCache(saved)
+                    }
+                } catch {
+                    if PendingReviewRetry.classify(error) == .retryLater { return }
+                    pendingReviews.markStateDone(item.id)
+                }
             }
-            return updated
-        } catch {
-            print("Spaced-Repetition-Update fehlgeschlagen: \(error.localizedDescription)")
-            return nil
+
+            if let log = item.log {
+                do {
+                    try await repo.insertReviewLog(log)
+                    pendingReviews.markLogDone(item.id)
+                } catch {
+                    if PendingReviewRetry.classify(error) == .retryLater { return }
+                    pendingReviews.markLogDone(item.id)
+                }
+            }
         }
+    }
+
+    /// Karte vom Server mit einem noch nicht gespeicherten, neueren
+    /// FSRS-Stand überlagern.
+    private func applyingPendingState(_ card: Flashcard) -> Flashcard {
+        guard let state = pendingReviews.pendingState(for: card.id, owner: repository.ownerKey) else { return card }
+        var updated = card
+        updated.apply(state)
+        return updated
+    }
+
+    private func replaceInCache(_ card: Flashcard) {
+        guard var list = flashcards[card.subfolderId], let idx = list.firstIndex(where: { $0.id == card.id }) else { return }
+        list[idx] = card
+        flashcards[card.subfolderId] = list
     }
 }

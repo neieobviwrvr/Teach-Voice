@@ -6,7 +6,7 @@ import SwiftUI
 ///   (`VoiceStudyView`).
 /// - `tippen`: Anki-Stil ohne Mikrofon und ohne KI – Frage lesen, "Antwort
 ///   zeigen", selbst bewerten (`AnkiStudyView`).
-enum StudyMode: Hashable {
+enum StudyMode: String, Hashable, Codable {
     case sprechen
     case tippen
 
