@@ -52,6 +52,14 @@ struct VoiceStudyView: View {
     @State private var loopTask: Task<Void, Never>?
     /// Der "Halten zum Nachdenken"-Kreis ist gerade gedrückt.
     @State private var isHoldingToThink = false
+    /// Karte umgedreht (Frage angetippt): Rückseite mit Musterantwort und
+    /// Selbstbewertung, ohne Aufnahme und ohne KI.
+    @State private var isFlipped = false
+    /// Auf der Rückseite bewertet, während die Frage noch vorgelesen wurde --
+    /// wird übernommen, sobald `runLoop` dort ankommt.
+    @State private var pendingUrteil: GradingResult.Urteil?
+    /// "Überspringen" getippt: zählt als falsch, sofort weiter.
+    @State private var skipRequested = false
 
     /// `vorbereiten`: Bevor die erste Frage kommt, ist alles bereit --
     /// Mikrofonzugriff geklärt, Spracherkennung geladen, Stimme für die
@@ -105,8 +113,12 @@ struct VoiceStudyView: View {
                     if phase == .selbstbewertung, let feedback {
                         feedbackPanel(feedback)
                     }
-                    Button("Beenden", role: .destructive) { stopEverythingAndClose() }
-                        .buttonStyle(.bordered)
+                    // In der Selbstbewertung bzw. auf der Rückseite gibt es
+                    // ohnehin "Falsch". Beenden: Zurück-Pfeil oben links.
+                    if !isFlipped, phase != .selbstbewertung {
+                        SkipCardButton { skipCard() }
+                            .disabled(!canInterrupt)
+                    }
                 }
             }
             .padding()
@@ -150,7 +162,13 @@ struct VoiceStudyView: View {
     // MARK: - Ansicht
 
     private var showsHoldButton: Bool {
-        phase == .zuhoeren && preparationError == nil && !queue.isFinished
+        phase == .zuhoeren && !isFlipped && preparationError == nil && !queue.isFinished
+    }
+
+    /// Umdrehen und Überspringen gehen, solange vorgelesen oder zugehört
+    /// wird (danach dauert es nur noch Sekunden bis zur Bewertung).
+    private var canInterrupt: Bool {
+        !isFlipped && !skipRequested && (phase == .vorlesen || phase == .zuhoeren)
     }
 
     private var preparationView: some View {
@@ -206,15 +224,61 @@ struct VoiceStudyView: View {
             Text(queue.progressText)
                 .font(.footnote)
                 .foregroundStyle(.secondary)
+            FlipCard(angle: isFlipped ? 180 : 0) {
+                cardFront(card)
+            } back: {
+                cardBack(card)
+            }
+        }
+    }
+
+    /// Vorderseite: die Frage. Antippen dreht die Karte um (Simons Wunsch,
+    /// wie bei StudyFlash) -- das Vorlesen läuft dabei bewusst weiter.
+    private func cardFront(_ card: Flashcard) -> some View {
+        let hint: String = canInterrupt ? "Dreht die Karte um und zeigt die Antwort." : ""
+        let traits: AccessibilityTraits = canInterrupt ? .isButton : []
+        return VStack(spacing: 10) {
             // Kein pauschales .bold(): sonst geht die im Editor gesetzte
             // Fett-Markierung unter.
             Text(flashcardMarkdown: card.question)
                 .font(.title2)
                 .multilineTextAlignment(.center)
-                .padding()
-                .frame(maxWidth: .infinity)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+            if canInterrupt {
+                Label("Antippen für die Antwort", systemImage: "hand.tap")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+        .contentShape(RoundedRectangle(cornerRadius: 16))
+        .onTapGesture { flipCard() }
+        .accessibilityAddTraits(traits)
+        .accessibilityHint(hint)
+    }
+
+    /// Rückseite: Musterantwort und Selbstbewertung. Wird nicht vorgelesen.
+    private func cardBack(_ card: Flashcard) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Antwort").font(.caption.bold()).foregroundStyle(.secondary)
+            Text(flashcardMarkdown: card.answer)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Divider()
+            Text("Wusstest du es?")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity)
+            HStack(spacing: 8) {
+                assessmentButton(.falsch, vorschlag: nil, card: card)
+                assessmentButton(.teilweise, vorschlag: nil, card: card)
+                assessmentButton(.richtig, vorschlag: nil, card: card)
+            }
+            .disabled(pendingUrteil != nil)
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
 
     @ViewBuilder
@@ -392,58 +456,19 @@ struct VoiceStudyView: View {
 
         while !Task.isCancelled, let card = queue.current {
             feedback = nil
-            phase = .vorlesen
-            await speech.speakAndWait(spokenQuestion(card))
-            if Task.isCancelled { return }
-            await soundPlayer.play(.ready)
-            if Task.isCancelled { return }
+            isFlipped = false
+            pendingUrteil = nil
+            skipRequested = false
 
-            // Während der User antwortet, schon die nächsten Fragen als
-            // Audio holen -- dann startet die nächste Ansage ohne Pause.
-            let upcoming = queue.upcoming(Self.vorladenAnzahl + 1).dropFirst().map(spokenQuestion)
-            Task { await speech.prefetch(Array(upcoming)) }
-
-            // Sicherheitsnetz: nie aufnehmen, solange noch etwas vorgelesen wird.
-            speech.stop()
-            phase = .zuhoeren
-            let url = await recorder.recordUntilSilence(
-                silenceTimeout: Self.denkpause,
-                maxDuration: Self.maxAufnahme,
-                maxHoldDuration: Self.maxAufnahmeMitHalten
-            )
-            if Task.isCancelled || recorder.permissionDenied { return }
-
-            var transcript: String?
-            if let url {
-                phase = .transkribieren
-                transcript = await transcriber.transcribe(audioURL: url)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if Task.isCancelled { return }
-            }
-
-            let newFeedback: Feedback
-            if let transcript, !transcript.isEmpty {
-                phase = .bewerten
-                newFeedback = await grade(card: card, transcript: transcript)
-                if Task.isCancelled { return }
-            } else {
-                newFeedback = Feedback(
-                    card: card, transcript: nil, result: nil,
-                    hinweis: "Keine Antwort erkannt – hier ist die Musterantwort."
-                )
-            }
-
-            let urteil = await waitForSelfAssessment(newFeedback)
-            // Beim Verlassen der Ansicht wird die offene Bewertung nur
-            // aufgelöst, damit der Task endet -- dann NICHTS speichern.
-            if Task.isCancelled { return }
+            // `nil`: abgebrochen (Ansicht verlassen o.ä.) -- dann NICHTS speichern.
+            guard let outcome = await ask(card) else { return }
 
             // Gleicher Zeitpunkt und Prüfungstermin für Runde und Speichern,
             // damit beide exakt denselben FSRS-Zustand berechnen.
             let now = Date()
-            queue.record(urteil, percent: newFeedback.result?.deckungProzent, now: now, examDate: library.examDate(for: card))
+            queue.record(outcome.urteil, percent: outcome.percent, now: now, examDate: library.examDate(for: card))
             await library.recordSpacedRepetitionOutcome(
-                for: card, urteil: urteil, mode: .sprechen, percent: newFeedback.result?.deckungProzent, now: now
+                for: card, urteil: outcome.urteil, mode: .sprechen, percent: outcome.percent, now: now
             )
         }
 
@@ -451,6 +476,92 @@ struct VoiceStudyView: View {
             feedback = nil
             phase = .fertig
             await speech.speakAndWait(summarySentence())
+        }
+    }
+
+    private struct CardOutcome {
+        let urteil: GradingResult.Urteil
+        /// Deckung laut KI, nur bei gesprochener (und bewerteter) Antwort.
+        let percent: Double?
+    }
+
+    /// Fragt eine Karte ab: vorlesen, zuhören, erkennen, KI-Bewertung,
+    /// Selbstbewertung. Umdrehen oder Überspringen während des Vorlesens bzw.
+    /// Zuhörens kürzt das ab (`interruptedOutcome`). `nil` = abgebrochen.
+    private func ask(_ card: Flashcard) async -> CardOutcome? {
+        phase = .vorlesen
+        // Umdrehen unterbricht das Vorlesen bewusst NICHT (Simons Wunsch):
+        // die Frage läuft zu Ende, bis man auf der Rückseite bewertet.
+        await speech.speakAndWait(spokenQuestion(card))
+        if Task.isCancelled { return nil }
+        if let urteil = await interruptedOutcome() {
+            return Task.isCancelled ? nil : CardOutcome(urteil: urteil, percent: nil)
+        }
+
+        await soundPlayer.play(.ready)
+        if Task.isCancelled { return nil }
+        if let urteil = await interruptedOutcome() {
+            return Task.isCancelled ? nil : CardOutcome(urteil: urteil, percent: nil)
+        }
+
+        // Während der User antwortet, schon die nächsten Fragen als
+        // Audio holen -- dann startet die nächste Ansage ohne Pause.
+        let upcoming = queue.upcoming(Self.vorladenAnzahl + 1).dropFirst().map(spokenQuestion)
+        Task { await speech.prefetch(Array(upcoming)) }
+
+        // Sicherheitsnetz: nie aufnehmen, solange noch etwas vorgelesen wird.
+        speech.stop()
+        phase = .zuhoeren
+        let url = await recorder.recordUntilSilence(
+            silenceTimeout: Self.denkpause,
+            maxDuration: Self.maxAufnahme,
+            maxHoldDuration: Self.maxAufnahmeMitHalten
+        )
+        if Task.isCancelled || recorder.permissionDenied { return nil }
+        // Umgedreht/übersprungen während der Aufnahme: Aufnahme verwerfen,
+        // keine Erkennung, keine KI-Kosten.
+        if let urteil = await interruptedOutcome() {
+            return Task.isCancelled ? nil : CardOutcome(urteil: urteil, percent: nil)
+        }
+
+        var transcript: String?
+        if let url {
+            phase = .transkribieren
+            transcript = await transcriber.transcribe(audioURL: url)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if Task.isCancelled { return nil }
+        }
+
+        let newFeedback: Feedback
+        if let transcript, !transcript.isEmpty {
+            phase = .bewerten
+            newFeedback = await grade(card: card, transcript: transcript)
+            if Task.isCancelled { return nil }
+        } else {
+            newFeedback = Feedback(
+                card: card, transcript: nil, result: nil,
+                hinweis: "Keine Antwort erkannt – hier ist die Musterantwort."
+            )
+        }
+
+        let urteil = await waitForSelfAssessment(newFeedback)
+        // Beim Verlassen der Ansicht wird die offene Bewertung nur
+        // aufgelöst, damit der Task endet -- dann NICHTS speichern.
+        if Task.isCancelled { return nil }
+        return CardOutcome(urteil: urteil, percent: newFeedback.result?.deckungProzent)
+    }
+
+    /// Wurde die Karte übersprungen (-> falsch) oder umgedreht? Bei
+    /// umgedrehter Karte gilt die Bewertung auf der Rückseite -- schon
+    /// getippt (`pendingUrteil`) oder es wird darauf gewartet. `nil`: weder
+    /// noch, normal weiter.
+    private func interruptedOutcome() async -> GradingResult.Urteil? {
+        if skipRequested { return .falsch }
+        guard isFlipped else { return nil }
+        if let urteil = pendingUrteil { return urteil }
+        phase = .selbstbewertung
+        return await withCheckedContinuation { continuation in
+            assessmentContinuation = continuation
         }
     }
 
@@ -559,10 +670,38 @@ struct VoiceStudyView: View {
     }
 
     private func assess(_ urteil: GradingResult.Urteil) {
+        // Beendet auch das noch laufende Vorlesen der Frage, wenn auf der
+        // Rückseite bewertet wird -- dann kommt direkt die nächste Frage.
         speech.stop()
         HapticFeedback.play(for: urteil)
-        assessmentContinuation?.resume(returning: urteil)
-        assessmentContinuation = nil
+        if let continuation = assessmentContinuation {
+            assessmentContinuation = nil
+            continuation.resume(returning: urteil)
+        } else if isFlipped, pendingUrteil == nil {
+            // `runLoop` wartet noch auf das Vorlesen bzw. die Aufnahme und
+            // übernimmt die Bewertung, sobald es dort ankommt.
+            pendingUrteil = urteil
+            // Bedingungslos: auch wenn die Aufnahme gerade erst startet. Ein
+            // überzähliger Wunsch wird beim nächsten Aufnahmestart verworfen.
+            recorder.requestManualStop()
+        }
+    }
+
+    /// Frage angetippt: Karte umdrehen. Das Vorlesen läuft weiter, eine
+    /// laufende Aufnahme wird beendet und verworfen.
+    private func flipCard() {
+        guard canInterrupt else { return }
+        withAnimation(.easeInOut(duration: 0.5)) { isFlipped = true }
+        recorder.requestManualStop()
+    }
+
+    /// Karte überspringen: zählt als falsch, sofort zur nächsten Frage.
+    private func skipCard() {
+        guard canInterrupt else { return }
+        skipRequested = true
+        HapticFeedback.play(for: .falsch)
+        speech.stop()
+        recorder.requestManualStop()
     }
 
     private func summarySentence() -> String {

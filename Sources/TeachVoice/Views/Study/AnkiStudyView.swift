@@ -43,10 +43,13 @@ struct AnkiStudyView: View {
                         }
                         .buttonStyle(.borderedProminent)
                         .controlSize(.large)
-                    }
 
-                    Button("Beenden", role: .destructive) { close() }
-                        .buttonStyle(.bordered)
+                        // Statt "Beenden" (Simons Wunsch): ohne Umdrehen als
+                        // falsch werten ("Nochmal"), sofort weiter. Beenden
+                        // geht über den Zurück-Pfeil oben links.
+                        SkipCardButton { assess(.again) }
+                            .disabled(isSaving)
+                    }
                 } else {
                     SessionSummaryView(
                         queue: queue,
