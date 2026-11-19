@@ -3,22 +3,33 @@ import XCTest
 
 final class StudyQueueTests: XCTestCase {
 
-    private func makeCard(srsBox: Int = 1, srsDueAt: Date? = nil) -> Flashcard {
+    private var utc: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(identifier: "UTC")!
+        return calendar
+    }
+
+    private func noon(_ day: Int, minutes: Int = 0) -> Date {
+        let start = utc.date(from: DateComponents(year: 2026, month: 1, day: 1, hour: 12, minute: minutes))!
+        return utc.date(byAdding: .day, value: day, to: start)!
+    }
+
+    private func makeCard(srsDueAt: Date? = nil) -> Flashcard {
         Flashcard(
             id: UUID(), subfolderId: UUID(), userId: UUID(),
             question: "Q", answer: "A", position: 0,
             createdAt: Date(), updatedAt: Date(),
-            srsBox: srsBox, srsDueAt: srsDueAt
+            srsDueAt: srsDueAt
         )
     }
 
-    func testRichtigRemovesCardFromSession() {
+    func testRichtigRemovesCardFromSessionAndSchedulesWithFSRS() {
         let card = makeCard()
         var queue = StudyQueue(cards: [card])
 
-        let outcome = queue.record(.richtig)
+        let outcome = queue.record(.richtig, now: noon(0), calendar: utc)
 
-        XCTAssertEqual(outcome?.newBox, 2)
+        XCTAssertEqual(outcome?.intervalDays, 2, "Neue Karte, Richtig: laut FSRS-6 in 2 Tagen wieder fällig")
         XCTAssertTrue(queue.isFinished)
         XCTAssertEqual(queue.count(of: .richtig), 1)
     }
@@ -28,46 +39,64 @@ final class StudyQueueTests: XCTestCase {
         let b = makeCard()
         var queue = StudyQueue(cards: [a, b])
 
-        queue.record(.falsch)                     // a -> hinten wieder dran
+        queue.record(.falsch, now: noon(0), calendar: utc)          // a -> hinten wieder dran
         XCTAssertEqual(queue.pending.map(\.id), [b.id, a.id])
 
-        queue.record(.richtig)                    // b sitzt
+        queue.record(.richtig, now: noon(0, minutes: 1), calendar: utc)  // b sitzt
         XCTAssertEqual(queue.current?.id, a.id)
 
-        queue.record(.richtig)                    // a sitzt jetzt auch
+        queue.record(.richtig, now: noon(0, minutes: 2), calendar: utc)  // a sitzt jetzt auch
         XCTAssertTrue(queue.isFinished)
         XCTAssertEqual(queue.repetitions, 1)
     }
 
-    func testTeilweiseInBoxOneRepeatsButHigherBoxDoesNot() {
-        let neu = makeCard(srsBox: 1)
-        let gelernt = makeCard(srsBox: 3)
-        var queue = StudyQueue(cards: [neu, gelernt])
+    func testTeilweiseCountsAsRecalledAndDoesNotRepeatToday() {
+        // FSRS: "Hard" ist ein (knapp) gewusster Abruf -> nicht heute nochmal.
+        let neu = makeCard()
+        var queue = StudyQueue(cards: [neu])
 
-        queue.record(.teilweise)                  // Box 1 bleibt Box 1 -> heute nochmal
-        queue.record(.teilweise)                  // Box 3 bleibt Box 3 -> in 3 Tagen
+        let outcome = queue.record(.teilweise, now: noon(0), calendar: utc)
 
-        XCTAssertEqual(queue.pending.map(\.id), [neu.id])
+        XCTAssertEqual(outcome?.intervalDays, 1)
+        XCTAssertTrue(queue.isFinished)
     }
 
-    func testRequeuedCardCarriesUpdatedBox() {
-        let card = makeCard(srsBox: 4)
+    func testRequeuedCardCarriesUpdatedFSRSState() {
+        let card = makeCard()
         var queue = StudyQueue(cards: [card])
 
-        queue.record(.falsch)
+        queue.record(.falsch, now: noon(0), calendar: utc)
 
-        XCTAssertEqual(queue.current?.srsBox, 1, "Die Wiederholung muss mit der neuen Box weiterrechnen.")
-        let next = queue.record(.richtig)
-        XCTAssertEqual(next?.newBox, 2)
+        let requeued = queue.current
+        XCTAssertNotNil(requeued?.fsrsStability, "Die Wiederholung muss mit dem neuen FSRS-Zustand weiterrechnen.")
+        XCTAssertEqual(requeued?.fsrsReps, 1)
+        XCTAssertEqual(requeued?.srsDueAt, noon(0, minutes: 10))
+
+        // Gleicher Tag -> Kurzzeit-Stabilität, danach planmäßig in der Zukunft fällig.
+        let next = queue.record(.richtig, now: noon(0, minutes: 10), calendar: utc)
+        XCTAssertNotNil(next?.intervalDays)
+        XCTAssertEqual(next?.state.reps, 2)
+    }
+
+    func testExamDateIsPassedThrough() {
+        // Ohne Prüfung käme die Karte laut FSRS erst in Wochen wieder dran;
+        // Prüfung in 4 Tagen -> die Hälfte, also in 2 Tagen.
+        var learned = makeCard()
+        learned.apply(FSRSCardState(stability: 8.2956, difficulty: 1.0, lastReview: noon(-8), due: noon(0), reps: 1))
+        var queue = StudyQueue(cards: [learned])
+
+        let outcome = queue.record(.richtig, now: noon(0), examDate: noon(4), calendar: utc)
+
+        XCTAssertEqual(outcome?.intervalDays, 2)
     }
 
     func testStatisticsCountOnlyTheFirstAttempt() {
         let card = makeCard()
         var queue = StudyQueue(cards: [card])
 
-        queue.record(.falsch, percent: 20)
-        queue.record(.falsch, percent: 40)
-        queue.record(.richtig, percent: 90)
+        queue.record(.falsch, percent: 20, now: noon(0), calendar: utc)
+        queue.record(.falsch, percent: 40, now: noon(0, minutes: 10), calendar: utc)
+        queue.record(.richtig, percent: 90, now: noon(0, minutes: 20), calendar: utc)
 
         XCTAssertEqual(queue.firstAttempts.count, 1)
         XCTAssertEqual(queue.firstAttempts.first?.urteil, .falsch)
@@ -92,24 +121,5 @@ final class StudyQueueTests: XCTestCase {
         var queue = StudyQueue(cards: [])
         XCTAssertNil(queue.record(.richtig))
         XCTAssertTrue(queue.isFinished)
-    }
-
-    // MARK: - SpacedRepetition.sessionCards
-
-    func testSessionCardsContainDueAndNewButNotFutureCards() {
-        let now = Date()
-        let overdue = makeCard(srsDueAt: now.addingTimeInterval(-3_600))
-        let neu = makeCard(srsDueAt: nil)
-        let future = makeCard(srsDueAt: now.addingTimeInterval(86_400))
-
-        let result = SpacedRepetition.sessionCards([future, neu, overdue], now: now)
-
-        XCTAssertEqual(result.map(\.id), [overdue.id, neu.id])
-    }
-
-    func testIsDueAgainTodayOnlyForBoxOne() {
-        XCTAssertTrue(SpacedRepetition.isDueAgainToday(SpacedRepetition.nextState(currentBox: 3, urteil: .falsch)))
-        XCTAssertFalse(SpacedRepetition.isDueAgainToday(SpacedRepetition.nextState(currentBox: 1, urteil: .richtig)))
-        XCTAssertFalse(SpacedRepetition.isDueAgainToday(SpacedRepetition.nextState(currentBox: 2, urteil: .teilweise)))
     }
 }

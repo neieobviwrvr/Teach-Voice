@@ -98,7 +98,16 @@ struct AnkiStudyView: View {
         Button {
             assess(urteil)
         } label: {
-            Text(urteil.label).frame(maxWidth: .infinity)
+            VStack(spacing: 2) {
+                Text(urteil.label)
+                // Wann FSRS die Karte bei dieser Bewertung wieder zeigt.
+                if let card = queue.current {
+                    Text(library.nextReviewLabel(for: card, urteil: urteil))
+                        .font(.caption2)
+                        .opacity(0.85)
+                }
+            }
+            .frame(maxWidth: .infinity)
         }
         .buttonStyle(.borderedProminent)
         .tint(urteil.color)
@@ -114,10 +123,13 @@ struct AnkiStudyView: View {
         // Hintergrund speichern. `isSaving` verhindert Doppel-Taps, die
         // sonst die NÄCHSTE Karte gleich mitbewerten würden.
         isSaving = true
-        queue.record(urteil)
+        // Gleicher Zeitpunkt und Prüfungstermin für Runde und Speichern, damit
+        // beide exakt denselben FSRS-Zustand berechnen.
+        let now = Date()
+        queue.record(urteil, now: now, examDate: library.examDate(for: card))
         showAnswer = false
         Task {
-            await library.recordSpacedRepetitionOutcome(for: card, urteil: urteil)
+            await library.recordSpacedRepetitionOutcome(for: card, urteil: urteil, now: now)
             isSaving = false
         }
     }

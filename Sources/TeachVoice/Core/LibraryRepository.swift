@@ -12,6 +12,8 @@ protocol LibraryRepository: AnyObject {
     func fetchFolders() async throws -> [Folder]
     func insertFolder(name: String) async throws -> Folder
     func renameFolder(id: UUID, name: String) async throws -> Folder
+    /// Setzt oder löscht (`nil`) den Prüfungstermin eines Ober-Ordners.
+    func setFolderExamDate(id: UUID, examAt: Date?) async throws -> Folder
     func deleteFolder(id: UUID) async throws
 
     func fetchSubfolders(folderId: UUID) async throws -> [Subfolder]
@@ -27,6 +29,7 @@ protocol LibraryRepository: AnyObject {
     /// Schreibt den Kernelemente-Cache für die STT-Bewertung fort (Lazy Caching).
     func updateFlashcardGradingCache(id: UUID, kernelemente: [String], sourceHash: String) async throws -> Flashcard
 
-    /// Schreibt den Spaced-Repetition-Zustand fort (Box + nächste Fälligkeit).
-    func updateFlashcardSRS(id: UUID, box: Int, dueAt: Date, lastReviewedAt: Date) async throws -> Flashcard
+    /// Schreibt den FSRS-Lernzustand fort (Stabilität, Schwierigkeit,
+    /// Wiederholungen, Fälligkeit, letzte Wiederholung).
+    func updateFlashcardReview(id: UUID, state: FSRSCardState) async throws -> Flashcard
 }

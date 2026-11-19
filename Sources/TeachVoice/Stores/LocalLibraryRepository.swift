@@ -71,6 +71,16 @@ final class LocalLibraryRepository: LibraryRepository {
         return snapshot.folders[idx]
     }
 
+    func setFolderExamDate(id: UUID, examAt: Date?) async throws -> Folder {
+        guard let idx = snapshot.folders.firstIndex(where: { $0.id == id }) else {
+            throw APIError.server(status: 404, message: "Ordner nicht gefunden.")
+        }
+        snapshot.folders[idx].examAt = examAt
+        snapshot.folders[idx].updatedAt = Date()
+        persist()
+        return snapshot.folders[idx]
+    }
+
     func deleteFolder(id: UUID) async throws {
         snapshot.folders.removeAll { $0.id == id }
         let orphanedSubfolderIds = Set(snapshot.subfolders.filter { $0.folderId == id }.map(\.id))
@@ -155,13 +165,11 @@ final class LocalLibraryRepository: LibraryRepository {
         return snapshot.flashcards[idx]
     }
 
-    func updateFlashcardSRS(id: UUID, box: Int, dueAt: Date, lastReviewedAt: Date) async throws -> Flashcard {
+    func updateFlashcardReview(id: UUID, state: FSRSCardState) async throws -> Flashcard {
         guard let idx = snapshot.flashcards.firstIndex(where: { $0.id == id }) else {
             throw APIError.server(status: 404, message: "Karteikarte nicht gefunden.")
         }
-        snapshot.flashcards[idx].srsBox = box
-        snapshot.flashcards[idx].srsDueAt = dueAt
-        snapshot.flashcards[idx].srsLastReviewedAt = lastReviewedAt
+        snapshot.flashcards[idx].apply(state)
         persist()
         return snapshot.flashcards[idx]
     }

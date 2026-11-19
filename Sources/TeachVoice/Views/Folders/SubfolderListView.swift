@@ -15,8 +15,16 @@ struct SubfolderListView: View {
     @State private var studyRequest: StudySessionRequest?
     @State private var isPreparingStudy = false
 
+    /// Aktueller Stand des Ordners aus dem Store (z.B. mit gerade geändertem
+    /// Prüfungstermin) -- `folder` ist nur der Stand beim Öffnen.
+    private var currentFolder: Folder {
+        library.folders.first { $0.id == folder.id } ?? folder
+    }
+
     var body: some View {
         List {
+            examSection
+
             if library.subfolders(in: folder).count > 1 {
                 Section {
                     Button {
@@ -167,6 +175,61 @@ struct SubfolderListView: View {
         .sheet(isPresented: $showPDFImport) {
             PDFImportView(folder: folder)
         }
+    }
+
+    // MARK: - Prüfungstermin
+
+    /// Optionaler Prüfungstermin für diesen Ordner. FSRS zieht Wiederholungen,
+    /// die erst danach fällig wären, vor (siehe `FSRSScheduler`).
+    private var examSection: some View {
+        Section {
+            Toggle(isOn: Binding(
+                get: { currentFolder.examAt != nil },
+                set: { enabled in
+                    let date = enabled ? Self.normalizedExamDate(Calendar.current.date(byAdding: .day, value: 30, to: Date()) ?? Date()) : nil
+                    Task { await library.setExamDate(date, for: currentFolder) }
+                }
+            )) {
+                Label("Prüfungstermin", systemImage: "calendar")
+            }
+
+            if let examAt = currentFolder.examAt {
+                DatePicker(
+                    "Datum",
+                    selection: Binding(
+                        get: { examAt },
+                        set: { newDate in
+                            Task { await library.setExamDate(Self.normalizedExamDate(newDate), for: currentFolder) }
+                        }
+                    ),
+                    in: Calendar.current.startOfDay(for: Date())...,
+                    displayedComponents: .date
+                )
+            }
+        } footer: {
+            Text(examFooter)
+        }
+    }
+
+    private var examFooter: String {
+        guard let examAt = currentFolder.examAt else {
+            return "Optional: Mit Prüfungstermin plant die App so, dass jede Karte vor der Prüfung noch mindestens einmal drankommt."
+        }
+        let calendar = Calendar.current
+        let days = calendar.dateComponents([.day], from: calendar.startOfDay(for: Date()), to: calendar.startOfDay(for: examAt)).day ?? 0
+        if days < 0 {
+            return "Die Prüfung ist vorbei – es wird wieder ganz normal mit FSRS geplant."
+        }
+        if days == 0 {
+            return "Die Prüfung ist heute. Viel Erfolg!"
+        }
+        return "Noch \(days) Tag\(days == 1 ? "" : "e"). Wiederholungen, die erst nach der Prüfung dran wären, zieht die App vor – je näher die Prüfung, desto kürzer die Abstände."
+    }
+
+    /// Prüfungen liegen tagsüber: auf 12 Uhr setzen, damit der Termin sicher
+    /// auf den gewählten Lerntag fällt (Tagesgrenze 4 Uhr, siehe FSRSScheduler).
+    private static func normalizedExamDate(_ date: Date) -> Date {
+        Calendar.current.date(bySettingHour: 12, minute: 0, second: 0, of: date) ?? date
     }
 
     private func startWholeFolder() async {

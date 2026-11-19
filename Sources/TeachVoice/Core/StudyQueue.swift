@@ -4,11 +4,11 @@ import Foundation
 /// Tipp-Modus (Anki-Stil). Reine Logik ohne UI, damit sie testbar bleibt.
 ///
 /// - Die erste Karte in `pending` ist die aktuelle.
-/// - Nach jeder Bewertung wandert die Karte aus der Schlange. Muss sie laut
-///   Spaced Repetition heute nochmal dran (`SpacedRepetition.isDueAgainToday`),
-///   wird sie mit ihrem neuen Box-Stand hinten wieder angehängt. Die Session
-///   endet also erst, wenn jede Karte mindestens "teilweise" aus Box 2+ bzw.
-///   einmal "richtig" war.
+/// - Nach jeder Bewertung wandert die Karte aus der Schlange und bekommt ihren
+///   neuen FSRS-Zustand (`FSRSScheduler`). War sie falsch, ist sie laut FSRS
+///   in 10 Minuten wieder fällig und wird hinten angehängt -- die Runde endet
+///   erst, wenn jede Karte mindestens "teilweise" gewusst wurde. Die
+///   Wiederholung am selben Tag rechnet FSRS mit der Kurzzeit-Stabilität.
 /// - Für die Statistik zählt nur der ERSTE Versuch pro Karte ("auf Anhieb"),
 ///   Wiederholungen werden separat mitgezählt.
 struct StudyQueue {
@@ -61,10 +61,17 @@ struct StudyQueue {
     var seenCount: Int { firstAttempts.count }
 
     /// Verbucht das Ergebnis für die aktuelle Karte und gibt das
-    /// Spaced-Repetition-Ergebnis zurück (zum Speichern über `LibraryStore`).
-    /// Gibt `nil` zurück, wenn die Schlange leer ist.
+    /// FSRS-Ergebnis zurück. Gespeichert wird separat über
+    /// `LibraryStore.recordSpacedRepetitionOutcome` mit demselben Kartenstand
+    /// und demselben `now`. Gibt `nil` zurück, wenn die Schlange leer ist.
     @discardableResult
-    mutating func record(_ urteil: GradingResult.Urteil, percent: Double? = nil, now: Date = Date()) -> SpacedRepetition.Outcome? {
+    mutating func record(
+        _ urteil: GradingResult.Urteil,
+        percent: Double? = nil,
+        now: Date = Date(),
+        examDate: Date? = nil,
+        calendar: Calendar = .current
+    ) -> FSRSScheduler.Outcome? {
         guard var card = pending.first else { return nil }
         pending.removeFirst()
 
@@ -74,11 +81,11 @@ struct StudyQueue {
             firstAttempts.append(Attempt(card: card, urteil: urteil, percent: percent))
         }
 
-        let outcome = SpacedRepetition.nextState(currentBox: card.srsBox, urteil: urteil, now: now)
-        card.srsBox = outcome.newBox
-        card.srsDueAt = outcome.dueAt
-        card.srsLastReviewedAt = now
-        if SpacedRepetition.isDueAgainToday(outcome) {
+        let outcome = FSRSScheduler.review(
+            card.fsrsState, rating: FSRSRating(urteil), now: now, examDate: examDate, calendar: calendar
+        )
+        card.apply(outcome.state)
+        if outcome.isDueAgainToday {
             pending.append(card)
         }
         return outcome

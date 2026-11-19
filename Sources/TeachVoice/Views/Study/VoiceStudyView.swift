@@ -292,9 +292,9 @@ struct VoiceStudyView: View {
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity)
             HStack(spacing: 8) {
-                assessmentButton(.falsch, vorschlag: vorschlag)
-                assessmentButton(.teilweise, vorschlag: vorschlag)
-                assessmentButton(.richtig, vorschlag: vorschlag)
+                assessmentButton(.falsch, vorschlag: vorschlag, card: feedback.card)
+                assessmentButton(.teilweise, vorschlag: vorschlag, card: feedback.card)
+                assessmentButton(.richtig, vorschlag: vorschlag, card: feedback.card)
             }
         }
         .padding()
@@ -323,11 +323,18 @@ struct VoiceStudyView: View {
     /// Der von der KI vorgeschlagene Button ist gefüllt, die anderen nur
     /// umrandet – ein Tap auf irgendeinen zählt.
     @ViewBuilder
-    private func assessmentButton(_ urteil: GradingResult.Urteil, vorschlag: GradingResult.Urteil?) -> some View {
+    private func assessmentButton(_ urteil: GradingResult.Urteil, vorschlag: GradingResult.Urteil?, card: Flashcard) -> some View {
         let button = Button {
             assess(urteil)
         } label: {
-            Text(urteil.label).frame(maxWidth: .infinity)
+            VStack(spacing: 2) {
+                Text(urteil.label)
+                // Wann FSRS die Karte bei dieser Bewertung wieder zeigt.
+                Text(library.nextReviewLabel(for: queue.current ?? card, urteil: urteil))
+                    .font(.caption2)
+                    .opacity(0.85)
+            }
+            .frame(maxWidth: .infinity)
         }
         .tint(urteil.color)
         .controlSize(.large)
@@ -388,8 +395,11 @@ struct VoiceStudyView: View {
             // aufgelöst, damit der Task endet -- dann NICHTS speichern.
             if Task.isCancelled { return }
 
-            queue.record(urteil, percent: newFeedback.result?.deckungProzent)
-            await library.recordSpacedRepetitionOutcome(for: card, urteil: urteil)
+            // Gleicher Zeitpunkt und Prüfungstermin für Runde und Speichern,
+            // damit beide exakt denselben FSRS-Zustand berechnen.
+            let now = Date()
+            queue.record(urteil, percent: newFeedback.result?.deckungProzent, now: now, examDate: library.examDate(for: card))
+            await library.recordSpacedRepetitionOutcome(for: card, urteil: urteil, now: now)
         }
 
         if !Task.isCancelled, queue.isFinished {

@@ -1,57 +1,18 @@
 import XCTest
 @testable import TeachVoice
 
+/// Auswahl und Reihenfolge der Karten in einer Lernrunde. Die Planung selbst
+/// (FSRS) testet `FSRSTests`.
 final class SpacedRepetitionTests: XCTestCase {
 
-    private func makeCard(id: UUID = UUID(), srsBox: Int = 1, srsDueAt: Date? = nil) -> Flashcard {
+    private func makeCard(srsDueAt: Date? = nil) -> Flashcard {
         Flashcard(
-            id: id, subfolderId: UUID(), userId: UUID(),
+            id: UUID(), subfolderId: UUID(), userId: UUID(),
             question: "Q", answer: "A", position: 0,
             createdAt: Date(), updatedAt: Date(),
-            srsBox: srsBox, srsDueAt: srsDueAt
+            srsDueAt: srsDueAt
         )
     }
-
-    // MARK: - nextState
-
-    func testRichtigMovesUpOneBox() {
-        let outcome = SpacedRepetition.nextState(currentBox: 2, urteil: .richtig)
-        XCTAssertEqual(outcome.newBox, 3)
-    }
-
-    func testRichtigAtMaxBoxStaysCapped() {
-        let outcome = SpacedRepetition.nextState(currentBox: SpacedRepetition.maxBox, urteil: .richtig)
-        XCTAssertEqual(outcome.newBox, SpacedRepetition.maxBox, "Box darf 5 nicht überschreiten.")
-    }
-
-    func testTeilweiseKeepsSameBox() {
-        let outcome = SpacedRepetition.nextState(currentBox: 3, urteil: .teilweise)
-        XCTAssertEqual(outcome.newBox, 3)
-    }
-
-    func testFalschResetsToBoxOne() {
-        let outcome = SpacedRepetition.nextState(currentBox: 5, urteil: .falsch)
-        XCTAssertEqual(outcome.newBox, SpacedRepetition.minBox)
-    }
-
-    func testDueDateMatchesIntervalTableForNewBox() {
-        let now = Date()
-        let outcome = SpacedRepetition.nextState(currentBox: 1, urteil: .richtig, now: now)
-        // Box 1 -> richtig -> Box 2 -> intervalDays[1] = 1 Tag.
-        let expected = Calendar.current.date(byAdding: .day, value: 1, to: now)!
-        XCTAssertEqual(outcome.dueAt.timeIntervalSince1970, expected.timeIntervalSince1970, accuracy: 1)
-    }
-
-    func testOutOfRangeCurrentBoxIsClamped() {
-        // Defensive: sollte ein ungültiger Box-Wert (0 oder >5) je vorkommen,
-        // darf intervalDays[newBox - minBox] nicht out-of-bounds crashen.
-        let tooLow = SpacedRepetition.nextState(currentBox: 0, urteil: .teilweise)
-        XCTAssertEqual(tooLow.newBox, SpacedRepetition.minBox)
-        let tooHigh = SpacedRepetition.nextState(currentBox: 99, urteil: .teilweise)
-        XCTAssertEqual(tooHigh.newBox, SpacedRepetition.maxBox)
-    }
-
-    // MARK: - ordered
 
     func testOrderedPutsOverdueCardsFirst() {
         let now = Date()
@@ -82,5 +43,16 @@ final class SpacedRepetitionTests: XCTestCase {
         let result = SpacedRepetition.ordered([leastOverdue, mostOverdue], now: now)
 
         XCTAssertEqual(result.map(\.id), [mostOverdue.id, leastOverdue.id])
+    }
+
+    func testSessionCardsContainDueAndNewButNotFutureCards() {
+        let now = Date()
+        let overdue = makeCard(srsDueAt: now.addingTimeInterval(-3_600))
+        let neu = makeCard(srsDueAt: nil)
+        let future = makeCard(srsDueAt: now.addingTimeInterval(86_400))
+
+        let result = SpacedRepetition.sessionCards([future, neu, overdue], now: now)
+
+        XCTAssertEqual(result.map(\.id), [overdue.id, neu.id])
     }
 }

@@ -24,9 +24,11 @@ Die **Zielnote** (Profil → „Bewertung im Sprach-Modus“, `Core/Zielnote.swi
 
 ## Spaced Repetition
 
-Einfaches 5-Stufen-Box-System (`Core/SpacedRepetition.swift`), Intervalle 0/1/3/7/14 Tage: richtig = eine Stufe hoch, teilweise = Stufe bleibt gleich, falsch = zurück auf Stufe 1. Signal ist in beiden Modi immer die **Selbsteinschätzung** (im Sprach-Modus von der KI nur vorgeschlagen).
+**FSRS-6** (`Core/FSRS.swift`) – derselbe Algorithmus wie in Anki, 1:1 nach der offiziellen Referenzimplementierung (py-fsrs) und per Tests gegen Referenzwerte abgesichert. FSRS merkt sich pro Karte **Stabilität** (nach wie vielen Tagen du sie mit 90 % Wahrscheinlichkeit noch weißt) und **Schwierigkeit** und plant die nächste Wiederholung genau dann, wenn die Abrufwahrscheinlichkeit auf 90 % fällt. Signal ist in beiden Modi die **Selbsteinschätzung**: Falsch = Again, Teilweise = Hard, Richtig = Good (im Sprach-Modus schlägt die KI sie nur vor). Die Buttons zeigen, wann die Karte bei der jeweiligen Bewertung wiederkommt.
 
-Eine Session (`Core/StudyQueue.swift`) fragt nur **fällige und neue** Karten ab (ist nichts fällig, werden alle geübt). Landet eine Karte nach der Bewertung in Box 1 (0 Tage), kommt sie **in derselben Session hinten wieder dran**, bis sie sitzt.
+Eine Lernrunde (`Core/StudyQueue.swift`) fragt nur **fällige und neue** Karten ab (ist nichts fällig, werden alle geübt). Falsche Karten kommen **in derselben Runde hinten wieder dran**, bis sie sitzen. Ein Lerntag beginnt um 4 Uhr (wie in Anki).
+
+**Prüfungstermin** (optional, pro Ordner, in der Ordner-Ansicht): Würde eine Karte erst nach der Prüfung wieder fällig, zieht die App die Wiederholung auf die Hälfte der verbleibenden Tage vor – jede Karte kommt vorher noch mindestens einmal dran, und die Abstände werden zur Prüfung hin kürzer.
 
 ## KI-Konnektor (Claude)
 

@@ -224,16 +224,47 @@ final class LibraryStore: ObservableObject {
         }
     }
 
-    /// Verbucht ein Lernergebnis im Spaced-Repetition-Box-System und
-    /// persistiert die neue Stufe + Fälligkeit. `urteil` ist die
-    /// Selbsteinschätzung des Users (in beiden Lernmodi).
-    @discardableResult
-    func recordSpacedRepetitionOutcome(for flashcard: Flashcard, urteil: GradingResult.Urteil) async -> Flashcard? {
-        let outcome = SpacedRepetition.nextState(currentBox: flashcard.srsBox, urteil: urteil)
+    /// Der Prüfungstermin des Ober-Ordners, zu dem diese Karte gehört (nur
+    /// bekannt, wenn der Unterordner geladen ist -- das ist beim Lernen immer so).
+    func examDate(for flashcard: Flashcard) -> Date? {
+        for (folderId, list) in subfolders where list.contains(where: { $0.id == flashcard.subfolderId }) {
+            return folders.first { $0.id == folderId }?.examAt
+        }
+        return nil
+    }
+
+    /// Kurztext, wann FSRS die Karte bei dieser Bewertung wieder zeigt
+    /// ("10 Min", "3 T", "2 Wo" ...) -- für die Bewertungs-Buttons.
+    func nextReviewLabel(for flashcard: Flashcard, urteil: GradingResult.Urteil) -> String {
+        let outcome = FSRSScheduler.review(
+            flashcard.fsrsState, rating: FSRSRating(urteil), examDate: examDate(for: flashcard)
+        )
+        return FSRSScheduler.intervalLabel(outcome.intervalDays)
+    }
+
+    func setExamDate(_ date: Date?, for folder: Folder) async {
         do {
-            let updated = try await repository.updateFlashcardSRS(
-                id: flashcard.id, box: outcome.newBox, dueAt: outcome.dueAt, lastReviewedAt: Date()
-            )
+            let updated = try await repository.setFolderExamDate(id: folder.id, examAt: date)
+            if let idx = folders.firstIndex(where: { $0.id == folder.id }) {
+                folders[idx] = updated
+            }
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// Verbucht ein Lernergebnis mit FSRS und speichert den neuen Lernzustand
+    /// (Stabilität, Schwierigkeit, Fälligkeit). `urteil` ist die
+    /// Selbsteinschätzung des Users (in beiden Lernmodi). Rechnet mit exakt
+    /// demselben Kartenstand wie die Lernrunde (`StudyQueue.record`), damit
+    /// gespeicherter Zustand und Runde übereinstimmen.
+    @discardableResult
+    func recordSpacedRepetitionOutcome(for flashcard: Flashcard, urteil: GradingResult.Urteil, now: Date = Date()) async -> Flashcard? {
+        let outcome = FSRSScheduler.review(
+            flashcard.fsrsState, rating: FSRSRating(urteil), now: now, examDate: examDate(for: flashcard)
+        )
+        do {
+            let updated = try await repository.updateFlashcardReview(id: flashcard.id, state: outcome.state)
             if var list = flashcards[flashcard.subfolderId], let idx = list.firstIndex(where: { $0.id == flashcard.id }) {
                 list[idx] = updated
                 flashcards[flashcard.subfolderId] = list

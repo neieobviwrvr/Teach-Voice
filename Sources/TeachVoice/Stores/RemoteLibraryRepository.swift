@@ -31,14 +31,38 @@ private struct GradingCachePatch: Encodable {
         case kernelementeSourceHash = "kernelemente_source_hash"
     }
 }
-private struct SRSPatch: Encodable {
-    let srsBox: Int
-    let srsDueAt: Date
-    let srsLastReviewedAt: Date
+private struct ReviewPatch: Encodable {
+    let state: FSRSCardState
     enum CodingKeys: String, CodingKey {
-        case srsBox = "srs_box"
-        case srsDueAt = "srs_due_at"
-        case srsLastReviewedAt = "srs_last_reviewed_at"
+        case stability = "fsrs_stability"
+        case difficulty = "fsrs_difficulty"
+        case reps = "fsrs_reps"
+        case lapses = "fsrs_lapses"
+        case dueAt = "srs_due_at"
+        case lastReviewedAt = "srs_last_reviewed_at"
+    }
+
+    // Explizit kodiert, damit auch `nil` als JSON-null geschrieben wird.
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(state.stability, forKey: .stability)
+        try container.encode(state.difficulty, forKey: .difficulty)
+        try container.encode(state.reps, forKey: .reps)
+        try container.encode(state.lapses, forKey: .lapses)
+        try container.encode(state.due, forKey: .dueAt)
+        try container.encode(state.lastReview, forKey: .lastReviewedAt)
+    }
+}
+
+private struct ExamDatePatch: Encodable {
+    let examAt: Date?
+    enum CodingKeys: String, CodingKey { case examAt = "exam_at" }
+
+    // Explizit, damit "Termin löschen" wirklich null schreibt (die
+    // synthetisierte Kodierung würde nil einfach weglassen).
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(examAt, forKey: .examAt)
     }
 }
 
@@ -85,6 +109,16 @@ final class RemoteLibraryRepository: LibraryRepository {
             table: "folders",
             id: id,
             body: RenamePatch(name: name),
+            accessToken: ctx.token
+        )
+    }
+
+    func setFolderExamDate(id: UUID, examAt: Date?) async throws -> Folder {
+        let ctx = try await context()
+        return try await SupabaseRestClient.update(
+            table: "folders",
+            id: id,
+            body: ExamDatePatch(examAt: examAt),
             accessToken: ctx.token
         )
     }
@@ -176,12 +210,12 @@ final class RemoteLibraryRepository: LibraryRepository {
         )
     }
 
-    func updateFlashcardSRS(id: UUID, box: Int, dueAt: Date, lastReviewedAt: Date) async throws -> Flashcard {
+    func updateFlashcardReview(id: UUID, state: FSRSCardState) async throws -> Flashcard {
         let ctx = try await context()
         return try await SupabaseRestClient.update(
             table: "flashcards",
             id: id,
-            body: SRSPatch(srsBox: box, srsDueAt: dueAt, srsLastReviewedAt: lastReviewedAt),
+            body: ReviewPatch(state: state),
             accessToken: ctx.token
         )
     }
