@@ -10,6 +10,9 @@ import SwiftUI
 /// - Längere Denkpause: die Aufnahme endet erst nach `denkpause` Sekunden
 ///   Stille (vorher 3 s, da wurde man beim Nachdenken abgeschnitten). Wer
 ///   fertig ist, tippt "Fertig".
+/// - Wer noch länger braucht, hält den Kreis unten gedrückt
+///   (`HoldToThinkButton`): solange gehalten wird, beendet Stille die
+///   Aufnahme nicht; Loslassen wertet sofort aus.
 /// - Nach jeder Antwort, die nicht als richtig gilt, liest die App eine
 ///   KURZE richtige Antwort vor (`GradingResult.kurzloesung`, 1-2 Sätze).
 /// - Wird nichts erkannt oder ist die KI nicht erreichbar, geht die Karte
@@ -23,6 +26,8 @@ struct VoiceStudyView: View {
     /// Sicherheitsnetz für die ganze Aufnahme (inkl. Nachdenken vor dem
     /// ersten Wort).
     private static let maxAufnahme: TimeInterval = 90
+    /// Obergrenze, solange der "Halten zum Nachdenken"-Kreis gedrückt ist.
+    private static let maxAufnahmeMitHalten: TimeInterval = 300
 
     @EnvironmentObject private var auth: AuthManager
     @EnvironmentObject private var library: LibraryStore
@@ -45,6 +50,8 @@ struct VoiceStudyView: View {
     /// Der Task, der `runLoop()` antreibt. `startLoop()` bricht einen alten
     /// immer zuerst ab, damit nie zwei Schleifen denselben Recorder teilen.
     @State private var loopTask: Task<Void, Never>?
+    /// Der "Halten zum Nachdenken"-Kreis ist gerade gedrückt.
+    @State private var isHoldingToThink = false
 
     /// `vorbereiten`: Bevor die erste Frage kommt, ist alles bereit --
     /// Mikrofonzugriff geklärt, Spracherkennung geladen, Stimme für die
@@ -103,6 +110,30 @@ struct VoiceStudyView: View {
             }
             .padding()
         }
+        // Beim Halten nie mitscrollen, auch wenn der Finger über die Seite fährt.
+        .scrollDisabled(isHoldingToThink)
+        // Außerhalb des Scroll-Inhalts: die ScrollView fängt die Fingerbewegung
+        // nicht ab, und der Kreis verdeckt am festen Platz nichts.
+        .safeAreaInset(edge: .bottom) {
+            if showsHoldButton {
+                HoldToThinkButton(
+                    onHoldStart: {
+                        isHoldingToThink = true
+                        recorder.beginHold()
+                    },
+                    onHoldEnd: { submit in
+                        isHoldingToThink = false
+                        recorder.endHold(submit: submit)
+                    }
+                )
+                .padding(.bottom, 8)
+            }
+        }
+        // Endet das Zuhören anders (z.B. "Fertig" mit einem zweiten Finger),
+        // verschwindet der Kreis evtl. noch gedrückt -- Zustand aufräumen.
+        .onChange(of: phase) { _, newPhase in
+            if newPhase != .zuhoeren { isHoldingToThink = false }
+        }
         .navigationTitle(request.title)
         .navigationBarTitleDisplayMode(.inline)
         .task { startLoop() }
@@ -116,6 +147,10 @@ struct VoiceStudyView: View {
     }
 
     // MARK: - Ansicht
+
+    private var showsHoldButton: Bool {
+        phase == .zuhoeren && preparationError == nil && !queue.isFinished
+    }
 
     private var preparationView: some View {
         VStack(spacing: 16) {
@@ -189,12 +224,18 @@ struct VoiceStudyView: View {
                 .foregroundStyle(.secondary)
         case .zuhoeren:
             VStack(spacing: 10) {
-                Label("Ich höre zu – lass dir Zeit", systemImage: "mic.fill")
-                    .foregroundStyle(.red)
-                Text("Die Aufnahme endet nach \(Int(Self.denkpause)) Sekunden Stille. Bist du fertig oder weißt es nicht, tipp auf Fertig.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
+                if isHoldingToThink {
+                    Label("Denk in Ruhe nach – lass los, wenn du fertig bist", systemImage: "brain.head.profile")
+                        .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                } else {
+                    Label("Ich höre zu – lass dir Zeit", systemImage: "mic.fill")
+                        .foregroundStyle(.red)
+                    Text("Die Aufnahme endet nach \(Int(Self.denkpause)) Sekunden Stille. Brauchst du länger, halte den Kreis unten gedrückt – beim Loslassen wird ausgewertet. Fertig oder weißt es nicht? Tipp auf Fertig.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                }
                 Button {
                     recorder.requestManualStop()
                 } label: {
@@ -364,7 +405,11 @@ struct VoiceStudyView: View {
             // Sicherheitsnetz: nie aufnehmen, solange noch etwas vorgelesen wird.
             speech.stop()
             phase = .zuhoeren
-            let url = await recorder.recordUntilSilence(silenceTimeout: Self.denkpause, maxDuration: Self.maxAufnahme)
+            let url = await recorder.recordUntilSilence(
+                silenceTimeout: Self.denkpause,
+                maxDuration: Self.maxAufnahme,
+                maxHoldDuration: Self.maxAufnahmeMitHalten
+            )
             if Task.isCancelled || recorder.permissionDenied { return }
 
             var transcript: String?

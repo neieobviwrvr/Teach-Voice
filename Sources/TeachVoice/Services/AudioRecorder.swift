@@ -19,9 +19,27 @@ final class AudioRecorder: NSObject, ObservableObject {
     /// nichts gesagt hat (z.B. weil er nur einen Button getippt hat) --
     /// spart in genau diesem Fall die Whisper-Latenz.
     private(set) var lastRecordingDetectedSpeech = false
+    /// "Halten zum Nachdenken" (`HoldToThinkButton`): solange gehalten wird,
+    /// beendet Stille die Aufnahme nicht. Wird zu Beginn jeder Aufnahme
+    /// zurückgesetzt, damit ein hängengebliebener Zustand nie in die nächste
+    /// Frage rutscht.
+    private var holdActive = false
 
     func requestManualStop() {
         manualStopRequested = true
+    }
+
+    /// Kreis gedrückt: Stille zählt ab jetzt nicht mehr.
+    func beginHold() {
+        holdActive = true
+    }
+
+    /// Kreis losgelassen. `submit` (lange genug gehalten) beendet die
+    /// Aufnahme sofort -- derselbe Weg wie "Fertig". Ohne `submit` (nur kurz
+    /// angetippt) läuft die Aufnahme normal weiter, die Stille zählt neu.
+    func endHold(submit: Bool) {
+        holdActive = false
+        if submit { requestManualStop() }
     }
 
     func requestPermission() async -> Bool {
@@ -103,15 +121,22 @@ final class AudioRecorder: NSObject, ObservableObject {
     /// lärm (z.B. vorbeifahrende Autos) unterscheiden. Aufrufer starten die
     /// Aufnahme jetzt erst, NACHDEM die Ansage komplett durchgelaufen ist
     /// (siehe VoiceStudyView).
+    ///
+    /// "Halten zum Nachdenken" (`beginHold`/`endHold`): solange gehalten
+    /// wird, beendet Stille die Aufnahme nie, und statt `maxDuration` gilt
+    /// `maxHoldDuration` als Obergrenze. Loslassen beendet sie sofort
+    /// (siehe `RecordingStopRule`).
     func recordUntilSilence(
         calibrationDuration: TimeInterval = 1.0,
         silenceMargin: Float = 12.0,
         minSilenceThresholdDB: Float = -50.0,
         maxSilenceThresholdDB: Float = -20.0,
         silenceTimeout: TimeInterval = 3.0,
-        maxDuration: TimeInterval = 45.0
+        maxDuration: TimeInterval = 45.0,
+        maxHoldDuration: TimeInterval = 300.0
     ) async -> URL? {
         manualStopRequested = false
+        holdActive = false
         lastRecordingDetectedSpeech = false
         guard await beginRecording() else { return nil }
 
@@ -173,11 +198,45 @@ final class AudioRecorder: NSObject, ObservableObject {
                 silenceElapsed += pollInterval
             }
 
-            if (hasDetectedSpeech && silenceElapsed >= silenceTimeout) || totalElapsed >= maxDuration {
+            // Beim Halten zählt keine Stille -- nach einem nur kurzen Antippen
+            // beginnt die Denkpause dadurch von vorn.
+            if holdActive { silenceElapsed = 0 }
+
+            if RecordingStopRule.shouldStop(
+                hasDetectedSpeech: hasDetectedSpeech,
+                silenceElapsed: silenceElapsed,
+                silenceTimeout: silenceTimeout,
+                totalElapsed: totalElapsed,
+                maxDuration: maxDuration,
+                holding: holdActive,
+                maxHoldDuration: maxHoldDuration
+            ) {
                 break
             }
         }
 
         return stopRecording()
+    }
+}
+
+/// Wann `AudioRecorder.recordUntilSilence` von selbst aufhört (ohne
+/// "Fertig"/Loslassen). Eigene reine Funktion, damit sie ohne Mikrofon
+/// testbar ist (`RecordingStopRuleTests`).
+enum RecordingStopRule {
+    static func shouldStop(
+        hasDetectedSpeech: Bool,
+        silenceElapsed: TimeInterval,
+        silenceTimeout: TimeInterval,
+        totalElapsed: TimeInterval,
+        maxDuration: TimeInterval,
+        holding: Bool,
+        maxHoldDuration: TimeInterval
+    ) -> Bool {
+        if holding {
+            // Gehalten: nur die (großzügige) Obergrenze, nie die Stille.
+            return totalElapsed >= maxHoldDuration
+        }
+        // Stille zählt erst nach dem ersten Wort; `maxDuration` als Netz.
+        return (hasDetectedSpeech && silenceElapsed >= silenceTimeout) || totalElapsed >= maxDuration
     }
 }
