@@ -61,7 +61,8 @@ enum HoldReleaseRule {
 /// Antwort aus Versehen abgegeben wird -- dann erscheint nur der Hinweis
 /// "Gedrückt halten" und die Aufnahme läuft normal weiter.
 struct HoldToThinkButton: View {
-    static let diameter: CGFloat = 96
+    /// 120 statt anfangs 96 pt (Simon, 2026-11-20: "größer").
+    static let diameter: CGFloat = 120
 
     let onHoldStart: () -> Void
     let onHoldEnd: (HoldRelease) -> Void
@@ -119,17 +120,17 @@ struct HoldToThinkButton: View {
             VStack(spacing: 2) {
                 if inSkipZone {
                     Image(systemName: "forward.fill")
-                        .font(.system(size: 28, weight: .semibold))
+                        .font(.system(size: 36, weight: .semibold))
                     Text("Überspringen")
-                        .font(.caption2.bold())
+                        .font(.caption.bold())
                 } else {
                     Image(systemName: "brain.head.profile")
-                        .font(.system(size: 30, weight: .semibold))
+                        .font(.system(size: 40, weight: .semibold))
                         .symbolEffect(.pulse, isActive: isPressed)
                     if isPressed, let pressStart {
                         TimelineView(.periodic(from: pressStart, by: 1)) { context in
                             Text(Self.elapsedLabel(context.date.timeIntervalSince(pressStart)))
-                                .font(.caption.monospacedDigit().bold())
+                                .font(.subheadline.monospacedDigit().bold())
                         }
                     }
                 }
