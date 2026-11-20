@@ -46,7 +46,8 @@ struct RootView: View {
 }
 
 /// Tab-Leiste unten (seit 2026-11-20): "Lernen" = der bisherige Startscreen,
-/// "Podcasts" = eigene Audiodateien nur auf diesem iPhone. Während einer
+/// "Podcasts" = eigene Audiodateien, "Zusammenfassungen" = fertige
+/// Zusammenfassungen als Dateien -- beides nur auf diesem iPhone. Während einer
 /// Lern-Session ist die Leiste ausgeblendet (`StudySessionView`), damit man
 /// nicht mitten in der Abfrage den Tab wechselt.
 struct MainTabView: View {
@@ -58,6 +59,8 @@ struct MainTabView: View {
                 .tabItem { Label("Lernen", systemImage: "rectangle.stack") }
             PodcastListView()
                 .tabItem { Label("Podcasts", systemImage: "headphones") }
+            SummaryListView()
+                .tabItem { Label("Zusammenfassungen", systemImage: "doc.text") }
         }
     }
 }

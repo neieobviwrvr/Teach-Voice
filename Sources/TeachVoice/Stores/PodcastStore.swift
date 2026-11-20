@@ -23,7 +23,7 @@ final class PodcastStore: ObservableObject {
 
     init(directory: URL = PodcastStore.defaultDirectory) {
         self.directory = directory
-        Self.prepareDirectory(directory)
+        FileImport.prepareDirectory(directory, excludeFromBackup: true)
         let loaded = PodcastIndex.loadValidated(from: directory.appendingPathComponent("podcasts.json"))
         index = loaded ?? PodcastIndex()
         if loaded != nil { removeOrphans() }
@@ -76,18 +76,6 @@ final class PodcastStore: ObservableObject {
     /// Dateien ohne Eintrag (z.B. ein Import, der mittendrin abgebrochen
     /// wurde) belegen sonst unsichtbar Speicher -- beim Start wegräumen.
     private func removeOrphans() {
-        let known = Set(index.podcasts.map(\.fileName) + ["podcasts.json"])
-        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
-        for file in files where !known.contains(file) {
-            try? FileManager.default.removeItem(at: directory.appendingPathComponent(file))
-        }
-    }
-
-    private static func prepareDirectory(_ directory: URL) {
-        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        var values = URLResourceValues()
-        values.isExcludedFromBackup = true
-        var url = directory
-        try? url.setResourceValues(values)
+        FileImport.removeOrphans(in: directory, keeping: Set(index.podcasts.map(\.fileName) + ["podcasts.json"]))
     }
 }

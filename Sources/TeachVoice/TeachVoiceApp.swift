@@ -27,6 +27,8 @@ struct TeachVoiceApp: App {
     // Lern-Audio ihn zuverlässig pausieren kann.
     @StateObject private var podcasts: PodcastStore
     @StateObject private var podcastPlayer: PodcastPlayer
+    // Zusammenfassungen (Tab "Zusammenfassungen"): ebenfalls nur auf dem Gerät.
+    @StateObject private var summaries = SummaryStore()
 
     init() {
         let auth = AuthManager()
@@ -50,6 +52,7 @@ struct TeachVoiceApp: App {
                 .environmentObject(speech)
                 .environmentObject(podcasts)
                 .environmentObject(podcastPlayer)
+                .environmentObject(summaries)
                 // Fängt den Rücksprung aus der Supabase-Bestätigungs-/Magic-
                 // Link-Mail ab (Custom-URL-Schema "teachvoice://", siehe
                 // project.yml CFBundleURLTypes + AuthManager.handleAuthRedirect)

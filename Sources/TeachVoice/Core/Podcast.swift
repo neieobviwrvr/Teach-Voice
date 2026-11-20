@@ -177,15 +177,11 @@ enum PodcastImportRule {
 
     /// Titel aus dem Dateinamen, ohne Endung; Unterstriche werden Leerzeichen.
     static func defaultTitle(forFileName fileName: String) -> String {
-        let base = (fileName as NSString).deletingPathExtension
-            .replacingOccurrences(of: "_", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return base.isEmpty ? "Podcast" : base
+        FileImport.defaultTitle(forFileName: fileName, fallback: "Podcast")
     }
 
     /// Endung der Kopie: die des Originals, sonst m4a.
     static func fileExtension(forFileName fileName: String) -> String {
-        let ext = (fileName as NSString).pathExtension.lowercased()
-        return ext.isEmpty ? "m4a" : ext
+        FileImport.fileExtension(forFileName: fileName, fallback: "m4a")
     }
 }

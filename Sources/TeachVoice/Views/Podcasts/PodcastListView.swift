@@ -51,9 +51,9 @@ struct PodcastListView: View {
                     }
                 }
             }
-            ForEach(sections, id: \.id) { section in
+            ForEach(sections) { section in
                 Section {
-                    ForEach(section.podcasts) { podcast in
+                    ForEach(section.items) { podcast in
                         row(podcast)
                     }
                 } header: {
@@ -82,32 +82,9 @@ struct PodcastListView: View {
         }
     }
 
-    private struct PodcastSection {
-        let id: String
-        let title: String?
-        let podcasts: [Podcast]
-    }
-
-    /// Nach Lern-Ordner gruppiert (in der Reihenfolge der Ordner), danach
-    /// "Ohne Ordner". Ist nichts zugeordnet, eine Liste ohne Überschrift.
-    private var sections: [PodcastSection] {
-        let all = podcasts.podcasts
-        let folderIds = Set(library.folders.map(\.id))
-        var result: [PodcastSection] = []
-        for folder in library.folders {
-            let inFolder = all.filter { $0.folderId == folder.id }
-            if !inFolder.isEmpty {
-                result.append(PodcastSection(id: folder.id.uuidString, title: folder.name, podcasts: inFolder))
-            }
-        }
-        let unassigned = all.filter { podcast in
-            guard let folderId = podcast.folderId else { return true }
-            return !folderIds.contains(folderId)
-        }
-        if !unassigned.isEmpty {
-            result.append(PodcastSection(id: "ohne-ordner", title: result.isEmpty ? nil : "Ohne Ordner", podcasts: unassigned))
-        }
-        return result
+    /// Nach Lern-Ordner gruppiert, danach "Ohne Ordner".
+    private var sections: [FolderSection<Podcast>] {
+        FolderGrouping.sections(podcasts.podcasts, folders: library.folders) { $0.folderId }
     }
 
     private var storageFooter: String {

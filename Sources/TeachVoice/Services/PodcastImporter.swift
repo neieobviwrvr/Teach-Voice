@@ -27,10 +27,7 @@ enum PodcastImporter {
         // anderen Apps sind nur während des Zugriffs lesbar (und werden bei
         // Bedarf erst heruntergeladen), AVFoundation liest aber asynchron.
         let copyURL = directory.appendingPathComponent("\(id.uuidString).\(ext)")
-        let accessing = source.startAccessingSecurityScopedResource()
-        defer { if accessing { source.stopAccessingSecurityScopedResource() } }
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try coordinatedCopy(from: source, to: copyURL)
+        try FileImport.copyPickedFile(from: source, to: copyURL)
 
         do {
             let asset = AVURLAsset(url: copyURL)
@@ -77,24 +74,7 @@ enum PodcastImporter {
     }
 
     private static func fileSize(_ url: URL) -> Int64 {
-        let size = (try? FileManager.default.attributesOfItem(atPath: url.path)[.size] as? NSNumber)?.int64Value
-        return size ?? 0
-    }
-
-    /// Kopie über NSFileCoordinator -- lädt eine nur in iCloud liegende Datei
-    /// dabei zuerst herunter.
-    private static func coordinatedCopy(from source: URL, to target: URL) throws {
-        var coordinatorError: NSError?
-        var copyError: Error?
-        NSFileCoordinator().coordinate(readingItemAt: source, options: .withoutChanges, error: &coordinatorError) { readURL in
-            do {
-                try? FileManager.default.removeItem(at: target)
-                try FileManager.default.copyItem(at: readURL, to: target)
-            } catch {
-                copyError = error
-            }
-        }
-        if let error = coordinatorError ?? copyError { throw error }
+        FileImport.fileSize(url)
     }
 
     /// Rechnet die Tonspur auf AAC mono 64 kbit/s um.
