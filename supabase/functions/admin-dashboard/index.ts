@@ -29,13 +29,15 @@ const TIME_ZONE = "Europe/Berlin";
 const DEFAULT_DAYS = 30;
 const MAX_DAYS = 366;
 
-// Muss zu den RATE_LIMIT_MAX_PER_HOUR-Konstanten der Functions passen --
-// nur zur Einordnung im Dashboard.
+// Muss zu den RATE_LIMIT_MAX_PER_HOUR- bzw. RATE_LIMIT_GLOBAL_GUEST_MAX_PER_HOUR-
+// Konstanten der Functions passen -- nur zur Einordnung im Dashboard. Schlüssel
+// = Scope-Suffix des Buckets in rate_limit_counters (siehe rateLimit.ts);
+// "connector" = teach-mcp (Bucket "connector:<userId>" ohne Suffix).
 const RATE_LIMITS_PER_HOUR = {
-  "grade-answer": 150,
-  "generate-questions": 40,
-  "text-to-speech": 300,
-  "teach-mcp": 200,
+  tts: { function: "text-to-speech", per_identity: 300, all_guests: 1200 },
+  grade: { function: "grade-answer", per_identity: 150, all_guests: 600 },
+  generate: { function: "generate-questions", per_identity: 40, all_guests: 150 },
+  connector: { function: "teach-mcp", per_identity: 200, all_guests: null },
 };
 
 const CORS_HEADERS: Record<string, string> = {

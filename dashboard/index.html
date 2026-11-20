@@ -266,7 +266,7 @@
       <div class="grid tiles" id="opsTiles"></div>
       <div class="card" style="margin-top:12px">
         <h3>Rate-Limit-Zähler, letzte 24 Stunden</h3>
-        <p class="desc">Aus <code>rate_limit_counters</code>. Achtung: grade-answer, generate-questions und text-to-speech teilen sich pro Identität einen Zähler, die Zahl ist die Summe. Engstes Limit: grade-answer mit 150 pro Stunde.</p>
+        <p class="desc">Aus <code>rate_limit_counters</code>. Jede Function zählt in ihrem eigenen Bucket, jede Zeile wird mit dem Limit ihrer Function verglichen (text-to-speech 300, grade-answer 150, generate-questions 40, Konnektor 200 pro Stunde). Zeilen „alt: gemeinsamer Zähler“ stammen vom Format vor dem 20.11.2026.</p>
         <div class="table-wrap" id="rateTable"></div>
       </div>
     </section>

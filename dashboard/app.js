@@ -458,7 +458,10 @@ function renderCosts(data, config) {
     ? `Gemessen seit ${dateTime(data.measuring_since)}. ${priceText}`
     : priceText;
   if (!data.measuring_since) {
-    banner("warn", h("strong", {}, "Noch keine Kostendaten. "), "Die Functions protokollieren erst, seit die geänderten Versionen von text-to-speech, grade-answer und generate-questions deployt sind.");
+    banner("warn", h("strong", {}, "Noch keine Kostendaten. "),
+      "Gemessen wird erst seit dem Deploy der Messung, und seitdem gab es noch keinen bezahlten Aufruf. "
+      + "Der erste Eintrag erscheint, sobald die App eine gesprochene Antwort bewertet, einen PDF-Import macht "
+      + "oder mit der Google-Stimme etwas Neues vorliest (schon zwischengespeicherte Fragen und die iPhone-Stimme kosten nichts und erscheinen nicht).");
   }
 
   // Hero + Vergleich mit dem Zeitraum davor
@@ -582,21 +585,45 @@ function renderOps(data, config) {
     tile("Konten mit API-Nutzung", int(data.callers?.distinct_users), "eingeloggte Konten im Zeitraum"),
   );
 
-  const limits = config.rate_limits_per_hour || {};
-  const limitFor = (identity) => identity.startsWith("connector:") ? limits["teach-mcp"] ?? 200
-    : identity === "global:all-guests" ? 600
-    : limits["grade-answer"] ?? 150;
+  // Jede Zeile wird gegen das Limit IHRER Function verglichen (Bucket-Format
+  // siehe supabase/functions/_shared/rateLimit.ts).
+  const limits = rateLimitTable(config.rate_limits_per_hour);
   const rows = (data.rate_limits_24h || []).map((r) => {
-    const limit = limitFor(r.identity);
-    const level = r.peak_hour >= limit ? "critical" : r.peak_hour >= 0.8 * limit ? "warning" : "good";
-    const own = session?.user_id && r.identity === `user:${session.user_id}`;
-    const kind = r.identity.startsWith("ip:") ? "Gast (IP)" : r.identity.startsWith("connector:") ? "Claude-Konnektor" : r.identity.startsWith("global:") ? "alle Gäste zusammen" : "Konto";
-    return [h("code", {}, r.identity), own ? `${kind} (du)` : kind, int(r.requests), `${int(r.peak_hour)} / ${int(limit)}`, int(r.active_hours),
+    const b = parseBucket(r.identity);
+    const lim = b.scope ? limits[b.scope] : limits.grade; // alter gemeinsamer Zähler: engstes damaliges Limit
+    const limit = b.allGuests ? lim.all_guests : lim.per_identity;
+    const level = !limit ? "good" : r.peak_hour >= limit ? "critical" : r.peak_hour >= 0.8 * limit ? "warning" : "good";
+    const own = session?.user_id && b.identity === `user:${session.user_id}`;
+    const kind = b.allGuests ? "alle Gäste zusammen" : b.identity.startsWith("ip:") ? "Gast (IP)" : b.identity.startsWith("connector:") ? "Konto (Konnektor)" : "Konto";
+    const fn = b.scope ? lim.function : "alt: gemeinsamer Zähler";
+    return [h("code", {}, b.identity), fn, own ? `${kind} (du)` : kind, int(r.requests), limit ? `${int(r.peak_hour)} / ${int(limit)}` : int(r.peak_hour), int(r.active_hours),
       statusEl(level, level === "good" ? "normal" : level === "warning" ? "nahe am Limit" : "Limit erreicht")];
   });
   $("rateTable").replaceChildren(rows.length
-    ? table(["Identität", "Art", "Anfragen 24 h", "Spitze / Stunde", "Aktive Stunden", "Einordnung"], rows, [2, 3, 4])
+    ? table(["Identität", "Function", "Art", "Anfragen 24 h", "Spitze / Stunde", "Aktive Stunden", "Einordnung"], rows, [3, 4, 5])
     : h("div", { class: "empty" }, "Keine Zähler in den letzten 24 Stunden."));
+}
+
+// Fallback, falls ein älteres admin-dashboard noch das alte Format liefert.
+const DEFAULT_RATE_LIMITS = {
+  tts: { function: "text-to-speech", per_identity: 300, all_guests: 1200 },
+  grade: { function: "grade-answer", per_identity: 150, all_guests: 600 },
+  generate: { function: "generate-questions", per_identity: 40, all_guests: 150 },
+  connector: { function: "teach-mcp", per_identity: 200, all_guests: null },
+};
+function rateLimitTable(fromConfig) {
+  const ok = fromConfig && ["tts", "grade", "generate", "connector"].every((k) => fromConfig[k] && typeof fromConfig[k].per_identity === "number");
+  return ok ? fromConfig : DEFAULT_RATE_LIMITS;
+}
+
+/// "user:<uuid>:grade" -> { identity: "user:<uuid>", scope: "grade" }.
+/// "global:all-guests:tts" -> allGuests. "connector:<uuid>" -> teach-mcp.
+/// Ohne Suffix (vor dem 20.11.2026): alter gemeinsamer Zähler, scope null.
+function parseBucket(bucket) {
+  const m = /^(.*):(tts|grade|generate)$/.exec(bucket);
+  if (m) return { identity: m[1], scope: m[2], allGuests: m[1] === "global:all-guests" };
+  if (bucket.startsWith("connector:")) return { identity: bucket, scope: "connector", allGuests: false };
+  return { identity: bucket, scope: null, allGuests: bucket === "global:all-guests" };
 }
 
 function streak(daysList, today) {
@@ -769,8 +796,10 @@ function demoPayload(nDays) {
       month_to_date: mtd,
       callers: { guest_calls: 0, user_calls: sum(totals, (t) => t.calls), distinct_users: 1 },
       rate_limits_24h: [
-        { identity: "user:11111111-2222-3333-4444-555555555555", requests: 212, peak_hour: 96, active_hours: 4 },
+        { identity: "user:11111111-2222-3333-4444-555555555555:tts", requests: 168, peak_hour: 71, active_hours: 4 },
+        { identity: "user:11111111-2222-3333-4444-555555555555:grade", requests: 112, peak_hour: 48, active_hours: 4 },
         { identity: "connector:11111111-2222-3333-4444-555555555555", requests: 14, peak_hour: 9, active_hours: 2 },
+        { identity: "user:11111111-2222-3333-4444-555555555555:generate", requests: 3, peak_hour: 2, active_hours: 1 },
       ],
       learning_daily: learningDaily,
       learning_summary: { reviews: sum(learningDaily, (d) => d.reviews), sprechen: sum(learningDaily, (d) => d.sprechen), tippen: sum(learningDaily, (d) => d.tippen), cards: 412, avg_deckung: 71.4 },
@@ -787,7 +816,7 @@ function demoPayload(nDays) {
       google_cloud_ceiling_usd: 20,
       tts_price_per_million_chars_usd: { wavenet: 4, chirp3_hd: 30 },
       openai_price_per_million_tokens_usd: { "gpt-4o-mini": { input: 0.15, cachedInput: 0.075, output: 0.6 } },
-      rate_limits_per_hour: { "grade-answer": 150, "generate-questions": 40, "text-to-speech": 300, "teach-mcp": 200 },
+      rate_limits_per_hour: DEFAULT_RATE_LIMITS,
     },
   };
 }

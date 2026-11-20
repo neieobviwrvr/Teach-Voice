@@ -101,7 +101,7 @@ Deno.serve(async (req: Request) => {
 
   try {
     const identity = await resolveIdentity(req);
-    const rateLimitOutcome = await checkRateLimit(identity, RATE_LIMIT_MAX_PER_HOUR, RATE_LIMIT_GLOBAL_GUEST_MAX_PER_HOUR);
+    const rateLimitOutcome = await checkRateLimit(identity, "tts", RATE_LIMIT_MAX_PER_HOUR, RATE_LIMIT_GLOBAL_GUEST_MAX_PER_HOUR);
     if (rateLimitOutcome === "rate_limited") {
       return jsonResponse({ error: "Zu viele Anfragen. Bitte kurz warten und erneut versuchen." }, 429);
     }

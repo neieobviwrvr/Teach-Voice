@@ -51,8 +51,26 @@ export type RateLimitOutcome = "ok" | "rate_limited" | "unavailable";
 
 const GLOBAL_GUEST_IDENTITY = "global:all-guests";
 
+/// Jede Function zählt in ihrem EIGENEN Bucket. Bis 2026-11-20 teilten sich
+/// text-to-speech, grade-answer und generate-questions pro Identität einen
+/// einzigen Zähler, verglichen ihn aber mit ihrem jeweils eigenen Limit
+/// (300 / 150 / 40): Vorlesen fraß das Bewertungs-Kontingent, und nach
+/// ~15-20 gelernten Karten lehnte generate-questions jeden PDF-Import ab.
+/// Der Scope ist deshalb ein Pflichtparameter von checkRateLimit, damit ihn
+/// keine Function vergessen kann.
+export type RateLimitScope = "tts" | "grade" | "generate";
+
+/// Name der Zeile in rate_limit_counters: "<identity>:<scope>", z.B.
+/// "user:<uuid>:grade", "ip:1.2.3.4:tts", "global:all-guests:generate".
+/// Die Identität selbst (für das Kostenprotokoll in usageLog.ts) bleibt
+/// unverändert "user:<uuid>" bzw. "ip:<adresse>".
+export function rateLimitBucket(identity: string, scope: RateLimitScope): string {
+  return `${identity}:${scope}`;
+}
+
 /// Prüft das Pro-Identität-Limit UND – nur für anonyme (IP-basierte)
-/// Anfragen – zusätzlich einen GLOBALEN Deckel über ALLE Gäste zusammen.
+/// Anfragen – zusätzlich einen GLOBALEN Deckel über ALLE Gäste zusammen,
+/// beides im Bucket der aufrufenden Function (`scope`).
 /// Grund: ein reiner Pro-IP-Zähler lässt sich durch IP-Wechsel (VPN, Mobilfunk-
 /// Wechsel) umgehen – ein client-mitgeschicktes "Geräte-ID"-Merkmal würde das
 /// NICHT lösen, da ein Angreifer eine solche ID genauso frei erfinden/rotieren
@@ -62,20 +80,24 @@ const GLOBAL_GUEST_IDENTITY = "global:all-guests";
 /// unterscheiden kann – bewusster Kompromiss für anonymen Zugriff ohne Login.
 export async function checkRateLimit(
   identity: string,
+  scope: RateLimitScope,
   maxRequestsPerHour: number,
   globalGuestMaxRequestsPerHour?: number
 ): Promise<RateLimitOutcome> {
-  const perIdentity = await checkSingleLimit(identity, maxRequestsPerHour);
+  const perIdentity = await checkBucketRateLimit(rateLimitBucket(identity, scope), maxRequestsPerHour);
   if (perIdentity !== "ok") return perIdentity;
 
   if (identity.startsWith("ip:") && globalGuestMaxRequestsPerHour) {
-    return checkSingleLimit(GLOBAL_GUEST_IDENTITY, globalGuestMaxRequestsPerHour);
+    return checkBucketRateLimit(rateLimitBucket(GLOBAL_GUEST_IDENTITY, scope), globalGuestMaxRequestsPerHour);
   }
 
   return "ok";
 }
 
-async function checkSingleLimit(identity: string, maxRequestsPerHour: number): Promise<RateLimitOutcome> {
+/// Zählt genau diesen einen Bucket. Direkt nur für Aufrufer, deren Bucket-
+/// Name schon eindeutig pro Function ist (teach-mcp: "connector:<userId>").
+/// Functions mit resolveIdentity() nutzen checkRateLimit mit Scope.
+export async function checkBucketRateLimit(identity: string, maxRequestsPerHour: number): Promise<RateLimitOutcome> {
   const supabaseUrl = Deno.env.get("SUPABASE_URL");
   const serviceRoleKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
   if (!supabaseUrl || !serviceRoleKey) {

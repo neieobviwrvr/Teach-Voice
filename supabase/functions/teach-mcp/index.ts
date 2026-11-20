@@ -43,7 +43,7 @@ import { createMcpHandler, McpServer } from "npm:@modelcontextprotocol/server@^2
 import { z } from "npm:zod@^4.3.6";
 
 import { CONNECTOR_KEY_PREFIX, hashConnectorKey, looksLikeConnectorKey } from "../_shared/connectorKey.ts";
-import { checkRateLimit } from "../_shared/rateLimit.ts";
+import { checkBucketRateLimit } from "../_shared/rateLimit.ts";
 import { serviceRest } from "../_shared/serviceRest.ts";
 import { answerHash } from "../_shared/answerHash.ts";
 
@@ -124,7 +124,9 @@ Deno.serve(async (req: Request) => {
       );
     }
 
-    const rateLimitOutcome = await checkRateLimit(`connector:${userId}`, RATE_LIMIT_MAX_PER_HOUR);
+    // Bucket-Name ist schon eindeutig pro Function -> direkt zählen (gleicher
+    // Bucket wie bisher, das Verhalten ändert sich nicht).
+    const rateLimitOutcome = await checkBucketRateLimit(`connector:${userId}`, RATE_LIMIT_MAX_PER_HOUR);
     if (rateLimitOutcome === "rate_limited") {
       return jsonResponse({ error: "Zu viele Anfragen an den Teach-Konnektor. Bitte etwas später erneut versuchen." }, 429);
     }
