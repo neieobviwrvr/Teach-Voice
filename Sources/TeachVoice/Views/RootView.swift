@@ -8,9 +8,9 @@ struct RootView: View {
     var body: some View {
         Group {
             if auth.isAuthenticated {
-                FolderListView(mode: .cloud)
+                MainTabView(mode: .cloud)
             } else if auth.isGuest {
-                FolderListView(mode: .guest)
+                MainTabView(mode: .guest)
             } else {
                 AuthView()
             }
@@ -42,5 +42,22 @@ struct RootView: View {
         // die einmalige CoreML-Modell-Kompilierung soll idealerweise schon
         // erledigt sein, während man noch durch die Ordner navigiert.
         .task { await transcriber.prepareIfNeeded() }
+    }
+}
+
+/// Tab-Leiste unten (seit 2026-11-20): "Lernen" = der bisherige Startscreen,
+/// "Podcasts" = eigene Audiodateien nur auf diesem iPhone. Während einer
+/// Lern-Session ist die Leiste ausgeblendet (`StudySessionView`), damit man
+/// nicht mitten in der Abfrage den Tab wechselt.
+struct MainTabView: View {
+    let mode: LibraryMode
+
+    var body: some View {
+        TabView {
+            FolderListView(mode: mode)
+                .tabItem { Label("Lernen", systemImage: "rectangle.stack") }
+            PodcastListView()
+                .tabItem { Label("Podcasts", systemImage: "headphones") }
+        }
     }
 }

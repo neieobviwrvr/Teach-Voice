@@ -22,6 +22,11 @@ struct TeachVoiceApp: App {
     // CloudSpeechService) -- für den Access-Token bei eingeloggten Usern,
     // genau wie GradingService/QuestionGenerationService ihn schon brauchen.
     @StateObject private var speech: SpeechService
+    // Podcasts (Tab "Podcasts"): nur auf dem Gerät, unabhängig vom Konto.
+    // App-weit EIN Player, damit nie zwei Podcasts gleichzeitig laufen und
+    // Lern-Audio ihn zuverlässig pausieren kann.
+    @StateObject private var podcasts: PodcastStore
+    @StateObject private var podcastPlayer: PodcastPlayer
 
     init() {
         let auth = AuthManager()
@@ -31,6 +36,9 @@ struct TeachVoiceApp: App {
         // tatsächliche Auth-Zustand feststeht.
         _library = StateObject(wrappedValue: LibraryStore(repository: LocalLibraryRepository()))
         _speech = StateObject(wrappedValue: SpeechService(auth: auth))
+        let podcasts = PodcastStore()
+        _podcasts = StateObject(wrappedValue: podcasts)
+        _podcastPlayer = StateObject(wrappedValue: PodcastPlayer(store: podcasts))
     }
 
     var body: some Scene {
@@ -40,6 +48,8 @@ struct TeachVoiceApp: App {
                 .environmentObject(library)
                 .environmentObject(transcriber)
                 .environmentObject(speech)
+                .environmentObject(podcasts)
+                .environmentObject(podcastPlayer)
                 // Fängt den Rücksprung aus der Supabase-Bestätigungs-/Magic-
                 // Link-Mail ab (Custom-URL-Schema "teachvoice://", siehe
                 // project.yml CFBundleURLTypes + AuthManager.handleAuthRedirect)

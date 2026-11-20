@@ -27,6 +27,11 @@ targets:
           Teach (Voice) benötigt Mikrofonzugriff, um deine gesprochene Antwort
           auf eine Karteikartenfrage aufzunehmen und lokal zu transkribieren.
         ITSAppUsesNonExemptEncryption: false
+        # Podcasts laufen bei gesperrtem Bildschirm weiter (PodcastPlayer).
+        # Der Sprach-Modus pausiert dagegen bewusst im Hintergrund
+        # (VoiceStudyView, scenePhase) -- Whisper soll dort nicht laufen.
+        UIBackgroundModes:
+          - audio
         # Eigenes URL-Schema, damit der Bestätigungs-/Magic-Link aus der
         # Supabase-Auth-Mail die App direkt öffnet und einloggt, statt in
         # einer Browser-Sackgasse zu landen (siehe AuthManager.handleAuthRedirect

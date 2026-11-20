@@ -51,12 +51,16 @@ struct StudySessionView: View {
     let request: StudySessionRequest
 
     var body: some View {
-        switch request.mode {
-        case .sprechen:
-            VoiceStudyView(request: request)
-        case .tippen:
-            AnkiStudyView(request: request)
+        Group {
+            switch request.mode {
+            case .sprechen:
+                VoiceStudyView(request: request)
+            case .tippen:
+                AnkiStudyView(request: request)
+            }
         }
+        // Kein Tab-Wechsel mitten in der Abfrage (Tab-Leiste, MainTabView).
+        .toolbar(.hidden, for: .tabBar)
     }
 }
 

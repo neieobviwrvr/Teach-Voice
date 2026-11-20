@@ -38,6 +38,7 @@ struct VoiceStudyView: View {
     // Ansagen gleichzeitig laufen.
     @EnvironmentObject private var speech: SpeechService
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
 
     @StateObject private var recorder = AudioRecorder()
     @StateObject private var soundPlayer = SoundEffectPlayer()
@@ -65,6 +66,9 @@ struct VoiceStudyView: View {
     /// Kreis an den Bildschirmrand gezogen: Karte ist umgedreht und zeigt nur
     /// die Lösung mit "Weiter" -- zählt fest als falsch, keine Bewertungswahl.
     @State private var skippedWithSolution = false
+    /// Beim Wechsel in den Hintergrund angehalten -- beim Zurückkommen
+    /// startet die aktuelle Karte neu (`handleScenePhase`).
+    @State private var pausedInBackground = false
 
     /// `vorbereiten`: Bevor die erste Frage kommt, ist alles bereit --
     /// Mikrofonzugriff geklärt, Spracherkennung geladen, Stimme für die
@@ -160,6 +164,7 @@ struct VoiceStudyView: View {
         .onChange(of: phase) { _, newPhase in
             if newPhase != .zuhoeren { isHoldingToThink = false }
         }
+        .onChange(of: scenePhase) { _, newPhase in handleScenePhase(newPhase) }
         .navigationTitle(request.title)
         .navigationBarTitleDisplayMode(.inline)
         .task { startLoop() }
@@ -781,6 +786,27 @@ struct VoiceStudyView: View {
         // der Task schon gecancelt ist, speichert `runLoop` dafür nichts.
         assessmentContinuation?.resume(returning: .falsch)
         assessmentContinuation = nil
+    }
+
+    /// Seit Podcasts bei gesperrtem Bildschirm weiterlaufen dürfen
+    /// (`UIBackgroundModes: audio`), liefe sonst auch die Abfrage im
+    /// Hintergrund weiter -- inklusive Whisper, das dort nicht rechnen darf.
+    /// Deshalb im Hintergrund anhalten (die offene Karte wird NICHT gewertet)
+    /// und beim Zurückkommen die aktuelle Karte von vorn starten.
+    private func handleScenePhase(_ newPhase: ScenePhase) {
+        switch newPhase {
+        case .background:
+            guard loopTask != nil, !queue.isFinished, preparationError == nil else { return }
+            stopEverything()
+            pausedInBackground = true
+        case .active:
+            guard pausedInBackground else { return }
+            pausedInBackground = false
+            feedback = nil
+            startLoop()
+        default:
+            break
+        }
     }
 
     private func stopEverythingAndClose() {

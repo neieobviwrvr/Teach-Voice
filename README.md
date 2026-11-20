@@ -16,6 +16,10 @@ Beim Start wählst du für beide Modi: **Spaced Repetition** (nur fällige und n
 
 Beide Modi enden mit einem **Statistik-Screen** (`Views/Study/SessionSummaryView.swift`): wie viele Karten auf Anhieb richtig/teilweise/falsch waren, wie viele Wiederholungen nötig waren, Detailliste, „Alle Karten nochmal üben“.
 
+## Podcasts
+
+Eigener Tab **„Podcasts“** in der Tab-Leiste unten (neben „Lernen“): Audiodateien – z. B. die NotebookLM-Podcasts zu den Folien – über „+“ aus der Dateien-App importieren und anhören. Alles bleibt **nur auf diesem iPhone** (kein Supabase, nicht im iCloud-Backup). Hat eine Datei eine hohe Datenrate, wird sie beim Import auf Sprachqualität heruntergerechnet (AAC mono 64 kbit/s, ca. 14 MB pro 30 Minuten), sonst unverändert übernommen. Der Player merkt sich die Stelle pro Podcast, läuft bei gesperrtem Bildschirm weiter (Steuerung auf dem Sperrbildschirm), springt 15 s zurück / 30 s vor und spielt mit 1×–2×. Podcasts lassen sich umbenennen, einem Lern-Ordner zuordnen und löschen; optional löschen sich zu Ende gehörte Podcasts selbst. Startet eine Lern-Session, pausiert der Podcast automatisch – Lern-Audio und Podcast laufen nie gleichzeitig.
+
 ## Bewertung im Sprach-Modus (Zielnote)
 
 Jede Karte hat **Kontrollpunkte**: die Aussagen, die eine vollständig richtige Antwort enthalten muss. Karten, die Claude über den Konnektor anlegt, bringen sie **verpflichtend** mit (Claude legt sie beim Schreiben fest, ohne Überschneidungen). Nur bei selbst geschriebenen oder per PDF importierten Karten leitet GPT sie einmalig selbst ab.

@@ -82,6 +82,15 @@ Exactly two modes (Simon's MVP decision), both started via `studyModeDialog` (`V
 
 `gpt-4o-mini` is used deliberately despite not appearing on OpenAI's current "flagship models" pricing table — it's still fully supported (own model page, unchanged pricing, generous Tier-1 rate limits) and just isn't part of the newest marketing lineup. Don't "helpfully" swap it for a GPT-5.x model without checking with the user first.
 
+### Podcasts tab (device-only)
+
+Simon's request (2026-11-20): keep his NotebookLM audio overviews (~30 min .m4a per slide deck) in the app "ohne Supabase und ohne den Speicher vollzumüllen". The home screen is now a `TabView` (`MainTabView` in `RootView.swift`): **Lernen** (the old `FolderListView`) and **Podcasts** (`Views/Podcasts/PodcastListView.swift`). Rules that keep it working:
+
+- **Never touches Supabase or `LibraryRepository`**: `Stores/PodcastStore.swift` keeps audio files + `podcasts.json` in Application Support/Podcasts, identical in cloud and guest mode. The folder is **excluded from iCloud backup** (the original stays in NotebookLM) and deliberately not in Caches (iOS could purge it). Index model + pure rules live in `Core/Podcast.swift` (`PodcastIndex`, `PodcastProgress`, `PodcastImportRule`), pinned by `PodcastLibraryTests`. Orphan files are removed at start **only if the index decoded fine** (`loadValidated`), otherwise a corrupt index would wipe every podcast.
+- **Import** (`Services/PodcastImporter.swift`, Files app via `fileImporter`, multiple at once): coordinated copy first (downloads iCloud-only files), then only if the source bitrate is > 96 kbit/s it's re-encoded to AAC mono 64 kbit/s 44.1 kHz (≈ 14 MB per 30 min) with AVAssetReader/Writer; if that fails or isn't smaller, the original copy is kept — an import never fails because of compression. Optional folder assignment is just a `folderId` (a folder not in the active account shows as "Ohne Ordner").
+- **Playback** (`Services/PodcastPlayer.swift`, one app-wide instance): AVPlayer with `.playback`/`.spokenAudio`, `UIBackgroundModes: audio` (project.yml), lock-screen controls via MPRemoteCommandCenter, resume 3 s before the saved spot (saved every 10 s + on pause/seek), speed 1×–2×, −15/+30 s, optional auto-delete when finished.
+- **Never overlaps study audio**: `AudioSessionCoordinator.activate()` posts `willActivateNotification` before switching to `.playAndRecord`, and the player pauses synchronously; `deactivate()` is skipped while `isPodcastPlaying`. The tab bar is hidden during a study session (`StudySessionView`, `.toolbar(.hidden, for: .tabBar)`), and because background audio is now allowed, `VoiceStudyView` stops its loop when the app goes to the background (current card not rated) and restarts that card on return (`handleScenePhase`) — Whisper must not run in the background. Keep all three.
+
 ### Data model / RLS
 
 `folders` → `subfolders` → `flashcards` (question/answer text), one Postgres migration per change under `supabase/migrations/`. Every table has Row Level Security scoped to `auth.uid() = user_id`.

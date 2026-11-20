@@ -54,14 +54,29 @@ import AVFoundation
 /// bleibt trotzdem als Kategorie bestehen (kein Zurückwechseln zu `.playback`
 /// zwischen Ansage und Aufnahme nötig, vermeidet die oben beschriebenen
 /// Umschalt-Klicks), auch wenn die gleichzeitige Nutzung nicht mehr gebraucht wird.
+///
+/// PODCASTS (2026-11-20): `PodcastPlayer` braucht `.playback`/`.spokenAudio`
+/// (Hintergrund + Sperrbildschirm) und setzt das selbst. Damit nie Podcast
+/// und Lern-Audio gleichzeitig laufen, meldet `activate()` sich vorher per
+/// `willActivateNotification` -- der Podcast pausiert dann. `deactivate()`
+/// lässt die Session in Ruhe, solange ein Podcast läuft (sonst würde z.B.
+/// das Schließen der Stimmenauswahl den Podcast abwürgen).
 enum AudioSessionCoordinator {
+    /// Lern-Audio (Vorlesen, Signalton, Aufnahme) übernimmt gleich die Session.
+    static let willActivateNotification = Notification.Name("AudioSessionCoordinator.willActivate")
+
+    /// Von `PodcastPlayer` gesetzt, solange ein Podcast abspielt.
+    static var isPodcastPlaying = false
+
     static func activate() {
+        NotificationCenter.default.post(name: willActivateNotification, object: nil)
         let session = AVAudioSession.sharedInstance()
         try? session.setCategory(.playAndRecord, mode: .measurement, options: [.duckOthers, .defaultToSpeaker, .allowBluetooth])
         try? session.setActive(true)
     }
 
     static func deactivate() {
+        guard !isPodcastPlaying else { return }
         try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
