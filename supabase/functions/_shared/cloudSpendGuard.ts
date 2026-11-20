@@ -21,7 +21,8 @@
 // spaeter ggf. auch Gemini-TTS) -- beide haengen am selben Google-Cloud-
 // Billing-Konto und damit am selben Guthaben, daher ein gemeinsamer
 // "google_cloud"-Zaehler statt getrennter pro Function.
-const CEILING_USD = 20;
+// Exportiert, damit das Dashboard (admin-dashboard) den Deckel anzeigen kann.
+export const CEILING_USD = 20;
 const GOOGLE_CLOUD_PROVIDER = "google_cloud";
 
 /// `true` = Call ist erlaubt (und der geschaetzte Betrag wurde bereits

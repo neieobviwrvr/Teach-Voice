@@ -55,6 +55,26 @@ Claude kann über einen eigenen MCP-Konnektor (Edge Function `supabase/functions
 - **Nur mit Konto**: Gast-Karten liegen ausschließlich auf dem iPhone, dort kommt der Konnektor nicht hin.
 - **Sicherheit**: Gespeichert wird nur ein Hash des Schlüssels (`connector_keys`, siehe `supabase/migrations/0012_connector_keys.sql`). Der Link ist so geheim wie ein Passwort; die App merkt ihn sich nur im Keychain des iPhones. Ein neuer Link ersetzt den alten, gesperrte Links wirken sofort. Für fremde Nutzer oder ChatGPT ist später OAuth statt Schlüssel vorgesehen.
 
+## Internes Dashboard (Kosten & Analytics)
+
+Eine eigene Webseite in [`dashboard/`](dashboard), unabhängig von der App und nur für Simon. Sie zeigt:
+
+- **Kosten**: Google Cloud TTS in Dollar und Zeichen pro Stimmklasse (WaveNet, Chirp 3 HD), OpenAI in Token und Dollar pro Funktion (Bewertung, Extraktion, PDF-Import), Kosten pro bewerteter Antwort, Hochrechnung für den Monat, Freikontingent und den Stand des 20-$-Google-Deckels. Zeitraum 7, 30, 90 Tage oder 1 Jahr.
+- **Betrieb und Missbrauch**: Fehlerquote, Gast-Aufrufe, vom Deckel blockierte Aufrufe, Extraktions-Quote und die Rate-Limit-Zähler der letzten 24 Stunden (ersetzt die manuelle SQL-Abfrage).
+- **Lernen** (aus `review_logs`): Bewertungen pro Lerntag nach Modus, Notenverteilung, Ø Deckung im Sprach-Modus, Lerntage, Serie, eine Heatmap nach Wochentag und Uhrzeit sowie den Stand der Bibliothek (neu, gelernt, fällig, mit Kontrollpunkten).
+
+**Öffnen:** `node dashboard/serve.mjs` starten, dann http://127.0.0.1:5180 aufrufen und mit dem normalen Teach-Konto anmelden. Unter http://127.0.0.1:5180/?demo gibt es erfundene Beispieldaten ohne Login.
+
+**Schutz:** Im Browser liegt nur der öffentliche anon-Key (derselbe wie in der App). Daten liefert ausschließlich die Edge Function `admin-dashboard`. Sie prüft das Login-Token über GoTrue und lässt nur User-IDs aus dem Secret `ADMIN_USER_IDS` durch. Die SQL-Funktion `admin_dashboard()` darf nur `service_role` ausführen, und zwar nur auf dem Server. Ein service_role- oder API-Schlüssel kommt nie in den Browser.
+
+**Woher die Kosten kommen:** aus einer eigenen Messung. `text-to-speech`, `grade-answer` und `generate-questions` schreiben nach jedem bezahlten Aufruf eine Zeile in `api_usage_events`: Zeichen bzw. Token, Preisklasse, geschätzte Kosten und Status. Inhalte und IP-Adressen werden nicht gespeichert. Siehe `supabase/migrations/0016_api_usage.sql` und `supabase/functions/_shared/usageLog.ts`; die Preise stehen zentral in `_shared/apiPricing.ts`. Das Freikontingent ist nicht abgezogen. Die offiziellen Zahlen bleiben die Google-Cloud-Konsole und das OpenAI-Usage-Dashboard. Kosten aus der Zeit vor dem Deploy lassen sich nicht nachträglich aufschlüsseln, dafür gibt es nur die Gesamtsumme des Deckels.
+
+**Einrichten (einmalig, nur auf ausdrückliches Kommando):**
+
+1. Migration anwenden: `supabase db query --linked --file supabase/migrations/0016_api_usage.sql`
+2. Functions deployen: `supabase functions deploy text-to-speech grade-answer generate-questions admin-dashboard --project-ref rvpisoibtqxxxpgjdhff`
+3. Eigene User-ID freischalten: `supabase secrets set ADMIN_USER_IDS=<user-id> --project-ref rvpisoibtqxxxpgjdhff`. Fehlt die ID noch, zeigt das Dashboard sie nach dem Login an. Mehrere IDs werden mit Komma getrennt.
+
 ## Struktur
 
 - Ordner (Ober-Ordner, umbenennbar) → Unterordner (umbenennbar) → Karteikarten (Frage + Antwort, nachträglich bearbeitbar).
@@ -98,7 +118,8 @@ Sources/TeachVoice/
   Views/                            # Auth, Folders, Flashcards, Profile, Study (Sprach- und Anki-Modus)
 .github/workflows/build-ipa.yml     # Manueller (workflow_dispatch) macOS-Runner-Build -> unsignierte IPA
 supabase/migrations/                # DB-Schema, RLS, eine Migration pro Änderung
-supabase/functions/                 # Edge Functions (grade-answer, text-to-speech, teach-mcp, …)
+supabase/functions/                 # Edge Functions (grade-answer, text-to-speech, teach-mcp, admin-dashboard, …)
+dashboard/                          # Internes Kosten- und Analytics-Dashboard (statische Seite + node serve.mjs)
 ```
 
 Es gibt bewusst **keine Auth-/Datenbank-SDK-Abhängigkeit** (kein `supabase-swift`) – Auth und CRUD laufen über schlanke,

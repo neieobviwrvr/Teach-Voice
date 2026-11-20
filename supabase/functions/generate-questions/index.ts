@@ -21,6 +21,8 @@
 // grade-answer.
 
 import { checkRateLimit, resolveIdentity } from "../_shared/rateLimit.ts";
+import { openAICostUsd, parseOpenAIUsage } from "../_shared/apiPricing.ts";
+import { logApiUsage } from "../_shared/usageLog.ts";
 
 const OPENAI_MODEL = "gpt-4o-mini";
 const MAX_QUESTIONS_CEILING = 25; // höchste Auswahl im PDF-Import ("Viele", PDFImportView); kein Kartenlimit mehr
@@ -92,7 +94,7 @@ Deno.serve(async (req: Request) => {
     // ausgeloest hat (zu lange Antworten).
     const answerStyle: AnswerStyle = body.answerStyle === "umfassend" ? "umfassend" : "kompakt";
 
-    const fragen = await generateQuestions(body.text, maxQuestions, answerStyle);
+    const fragen = await generateQuestions(body.text, maxQuestions, answerStyle, identity);
     const response: GenerateResponse = { fragen };
     return jsonResponse(response, 200);
   } catch (err) {
@@ -109,30 +111,57 @@ function jsonResponse(body: unknown, status: number): Response {
   });
 }
 
-async function callOpenAI(prompt: string): Promise<string> {
+/// `identity` nur fürs Kostenprotokoll (_shared/usageLog.ts).
+async function callOpenAI(prompt: string, identity: string): Promise<string> {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OPENAI_API_KEY ist nicht als Secret gesetzt.");
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
+  const startedAt = Date.now();
+  const logUsage = (status: "ok" | "error", httpStatus: number | null, json?: unknown) => {
+    const usage = parseOpenAIUsage(json);
+    logApiUsage({
+      functionName: "generate-questions",
+      operation: "question_generation",
+      provider: "openai",
       model: OPENAI_MODEL,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.3,
-      response_format: { type: "json_object" },
-    }),
-  });
+      priceClass: OPENAI_MODEL,
+      status,
+      httpStatus,
+      ...usage,
+      estimatedCostUsd: openAICostUsd(OPENAI_MODEL, usage),
+      identity,
+      durationMs: Date.now() - startedAt,
+    });
+  };
+
+  let response: Response;
+  try {
+    response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.3,
+        response_format: { type: "json_object" },
+      }),
+    });
+  } catch (err) {
+    logUsage("error", null);
+    throw err;
+  }
 
   if (!response.ok) {
+    logUsage("error", response.status);
     const errText = await response.text();
     throw new Error(`OpenAI-Fehler (${response.status}): ${errText}`);
   }
 
   const json = await response.json();
+  logUsage("ok", response.status, json);
   return json.choices[0].message.content as string;
 }
 
@@ -151,7 +180,8 @@ eine dichte, aber vollständige Erklärung.`,
 async function generateQuestions(
   text: string,
   maxQuestions: number,
-  answerStyle: AnswerStyle
+  answerStyle: AnswerStyle,
+  identity: string
 ): Promise<GeneratedQuestion[]> {
   const styleInstruction = STYLE_INSTRUCTIONS[answerStyle];
   const prompt = `Du bekommst einen Auszug aus Vorlesungsfolien (aus einem PDF extrahiert – daher ggf.
@@ -184,7 +214,7 @@ ${text}
 Antworte NUR mit einem JSON-Objekt exakt dieser Form:
 {"fragen": [{"frage": "...", "musterantwort": "..."}, ...]}`;
 
-  const raw = await callOpenAI(prompt);
+  const raw = await callOpenAI(prompt, identity);
   const parsed = JSON.parse(raw);
   const list = parsed.fragen;
   const isValid =

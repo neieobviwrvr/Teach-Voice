@@ -36,6 +36,8 @@
 // Rate-Limiting (../_shared/rateLimit.ts) UND serverseitige Längen-Obergrenzen.
 
 import { checkRateLimit, resolveIdentity } from "../_shared/rateLimit.ts";
+import { openAICostUsd, parseOpenAIUsage } from "../_shared/apiPricing.ts";
+import { logApiUsage } from "../_shared/usageLog.ts";
 
 const OPENAI_MODEL = "gpt-4o-mini";
 // Nur für das `urteil`-Feld der Antwort. Die App ignoriert es und bildet das
@@ -140,10 +142,10 @@ Deno.serve(async (req: Request) => {
 
     let kernelemente = cleanPoints(body.kernelemente ?? []);
     if (kernelemente.length === 0) {
-      kernelemente = await extractKontrollpunkte(body.question, body.answer);
+      kernelemente = await extractKontrollpunkte(body.question, body.answer, identity);
     }
 
-    const result = await gradeAnswer(body.question, kernelemente, body.sttText);
+    const result = await gradeAnswer(body.question, kernelemente, body.sttText, identity);
 
     const response: GradeResponse = { kernelemente, result };
     return jsonResponse(response, 200);
@@ -175,36 +177,72 @@ function cleanPoints(points: string[]): string[] {
   return result;
 }
 
-async function callOpenAI(system: string, user: string, schemaName: string, schema: Record<string, unknown>): Promise<unknown> {
+/// `operation` + `identity` nur fürs Kostenprotokoll (_shared/usageLog.ts):
+/// jeder OpenAI-Aufruf wird mit seinen Token protokolliert, getrennt nach
+/// Bewertung und (nur bei Cache-Fehlschlag) Extraktion.
+async function callOpenAI(
+  system: string,
+  user: string,
+  schemaName: string,
+  schema: Record<string, unknown>,
+  operation: "grading" | "extraction",
+  identity: string,
+): Promise<unknown> {
   const apiKey = Deno.env.get("OPENAI_API_KEY");
   if (!apiKey) throw new Error("OPENAI_API_KEY ist nicht als Secret gesetzt.");
 
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
+  const startedAt = Date.now();
+  const logUsage = (status: "ok" | "error", httpStatus: number | null, json?: unknown) => {
+    const usage = parseOpenAIUsage(json);
+    logApiUsage({
+      functionName: "grade-answer",
+      operation,
+      provider: "openai",
       model: OPENAI_MODEL,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: user },
-      ],
-      temperature: 0,
-      response_format: {
-        type: "json_schema",
-        json_schema: { name: schemaName, strict: true, schema },
+      priceClass: OPENAI_MODEL,
+      status,
+      httpStatus,
+      ...usage,
+      estimatedCostUsd: openAICostUsd(OPENAI_MODEL, usage),
+      identity,
+      durationMs: Date.now() - startedAt,
+    });
+  };
+
+  let response: Response;
+  try {
+    response = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
       },
-    }),
-  });
+      body: JSON.stringify({
+        model: OPENAI_MODEL,
+        messages: [
+          { role: "system", content: system },
+          { role: "user", content: user },
+        ],
+        temperature: 0,
+        response_format: {
+          type: "json_schema",
+          json_schema: { name: schemaName, strict: true, schema },
+        },
+      }),
+    });
+  } catch (err) {
+    logUsage("error", null);
+    throw err;
+  }
 
   if (!response.ok) {
+    logUsage("error", response.status);
     const errText = await response.text();
     throw new Error(`OpenAI-Fehler (${response.status}): ${errText}`);
   }
 
   const json = await response.json();
+  logUsage("ok", response.status, json);
   const content = json.choices?.[0]?.message?.content;
   if (typeof content !== "string") {
     throw new Error("Leere Antwort vom Modell.");
@@ -253,9 +291,9 @@ const EXTRAKTION_SCHEMA = {
   required: ["analyse", "kontrollpunkte"],
 };
 
-async function extractKontrollpunkte(question: string, answer: string): Promise<string[]> {
+async function extractKontrollpunkte(question: string, answer: string, identity: string): Promise<string[]> {
   const user = `Frage: ${question}\n\nMusterantwort:\n${answer}`;
-  const parsed = (await callOpenAI(EXTRAKTION_SYSTEM + EXTRAKTION_VORGEHEN, user, "kontrollpunkte", EXTRAKTION_SCHEMA)) as {
+  const parsed = (await callOpenAI(EXTRAKTION_SYSTEM + EXTRAKTION_VORGEHEN, user, "kontrollpunkte", EXTRAKTION_SCHEMA, "extraction", identity)) as {
     kontrollpunkte?: unknown;
   };
   const list = Array.isArray(parsed.kontrollpunkte) ? parsed.kontrollpunkte.map(String) : [];
@@ -312,7 +350,7 @@ const BEWERTUNG_SCHEMA = {
 /// zitierte das Modell sonst Belege aus ihr statt aus der gesprochenen
 /// Antwort. Die Kontrollpunkte sind so formuliert, dass sie für sich
 /// verständlich sind.
-async function gradeAnswer(question: string, kontrollpunkte: string[], sttText: string): Promise<GradingResult> {
+async function gradeAnswer(question: string, kontrollpunkte: string[], sttText: string, identity: string): Promise<GradingResult> {
   const user = `Frage: ${question}
 
 Kontrollpunkte:
@@ -321,7 +359,7 @@ ${kontrollpunkte.map((p, i) => `${i + 1}. ${p}`).join("\n")}
 Gesprochene Antwort (Transkript):
 ${sttText}`;
 
-  const parsed = (await callOpenAI(BEWERTUNG_SYSTEM, user, "bewertung", BEWERTUNG_SCHEMA)) as {
+  const parsed = (await callOpenAI(BEWERTUNG_SYSTEM, user, "bewertung", BEWERTUNG_SCHEMA, "grading", identity)) as {
     punkte?: { nr?: unknown; beleg?: unknown; status?: unknown }[];
     kurzloesung?: unknown;
   };

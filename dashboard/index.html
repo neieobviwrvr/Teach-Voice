@@ -1,0 +1,328 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<!-- Nur die eigene Seite, Chart.js vom CDN (per SRI festgenagelt) und das
+     Teach-Supabase-Projekt. Kein Inline-Script. -->
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' https://cdnjs.cloudflare.com; style-src 'self' 'unsafe-inline'; connect-src https://rvpisoibtqxxxpgjdhff.supabase.co; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<title>Teach Dashboard</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7;
+    --surface: #fcfcfb;
+    --surface-2: #f0efec;
+    --ink: #0b0b0b;
+    --ink-2: #52514e;
+    --muted: #898781;
+    --grid: #e1e0d9;
+    --axis: #c3c2b7;
+    --border: rgba(11, 11, 11, 0.10);
+    --accent: #2a78d6;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --s5: #e87ba4;
+    --seq-100: #cde2fb; --seq-250: #86b6ef; --seq-400: #3987e5; --seq-550: #1c5cab; --seq-700: #0d366b;
+    --good: #0ca30c; --warning: #fab219; --serious: #ec835a; --critical: #d03b3b;
+    --good-text: #006300;
+    --danger-text: #b32d2d;
+    --shadow: 0 1px 2px rgba(11, 11, 11, 0.04);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --surface-2: #262624;
+      --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+      --accent: #3987e5;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+      --seq-100: #104281; --seq-250: #184f95; --seq-400: #256abf; --seq-550: #5598e7; --seq-700: #9ec5f4;
+      --good-text: #0ca30c; --danger-text: #e66767;
+      --shadow: none;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --surface-2: #262624;
+    --ink: #f0efec; --ink-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835; --border: rgba(255, 255, 255, 0.10);
+    --accent: #3987e5;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --s5: #d55181;
+    --seq-100: #104281; --seq-250: #184f95; --seq-400: #256abf; --seq-550: #5598e7; --seq-700: #9ec5f4;
+    --good-text: #0ca30c; --danger-text: #e66767;
+    --shadow: none;
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: var(--page);
+    color: var(--ink);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  [hidden] { display: none !important; }
+  button, input { font: inherit; color: inherit; }
+  .wrap { max-width: 1200px; margin: 0 auto; padding: 0 16px 48px; }
+
+  /* Kopfzeile */
+  header.top {
+    position: sticky; top: 0; z-index: 5;
+    background: color-mix(in srgb, var(--page) 92%, transparent);
+    backdrop-filter: blur(6px);
+    border-bottom: 1px solid var(--border);
+  }
+  header.top .wrap { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding-top: 12px; padding-bottom: 12px; }
+  .brand { font-weight: 650; font-size: 15px; margin-right: auto; }
+  .brand small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .seg button { border: 0; background: none; padding: 6px 10px; cursor: pointer; color: var(--ink-2); }
+  .seg button + button { border-left: 1px solid var(--border); }
+  .seg button[aria-pressed="true"] { background: var(--surface-2); color: var(--ink); font-weight: 600; }
+  .btn { border: 1px solid var(--border); background: var(--surface); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  .btn:hover, .seg button:hover { background: var(--surface-2); }
+  .btn.primary { background: var(--accent); border-color: transparent; color: #fff; font-weight: 600; }
+  .btn.primary:hover { filter: brightness(1.08); background: var(--accent); }
+  .btn:disabled { opacity: .6; cursor: default; }
+  .meta { color: var(--muted); font-size: 12px; }
+
+  /* Banner */
+  .banner { margin: 16px 0 0; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); }
+  .banner strong { color: var(--ink); }
+  .banner.warn { border-left: 4px solid var(--warning); }
+  .banner.error { border-left: 4px solid var(--critical); }
+  .banner.info { border-left: 4px solid var(--accent); }
+
+  /* Login */
+  .login { max-width: 380px; margin: 12vh auto 0; background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 24px; box-shadow: var(--shadow); }
+  .login h1 { font-size: 18px; margin: 0 0 4px; }
+  .login p { margin: 0 0 16px; color: var(--ink-2); }
+  .login label { display: block; font-size: 12px; color: var(--ink-2); margin: 12px 0 4px; }
+  .login input { width: 100%; padding: 9px 10px; border-radius: 8px; border: 1px solid var(--axis); background: var(--page); }
+  .login input:focus, .btn:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+  .login .btn { width: 100%; margin-top: 18px; padding: 9px; }
+  .login .hint { font-size: 12px; color: var(--muted); margin-top: 14px; }
+  .login .err { color: var(--danger-text); font-size: 13px; margin-top: 12px; overflow-wrap: anywhere; }
+
+  /* Abschnitte & Karten */
+  section.block { margin-top: 28px; }
+  section.block > h2 { font-size: 13px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-2); margin: 0 0 4px; }
+  section.block > .sub { color: var(--muted); font-size: 12px; margin: 0 0 12px; }
+  .grid { display: grid; gap: 12px; }
+  .tiles { grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); }
+  .two { grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow); min-width: 0; }
+  .card h3 { font-size: 13px; font-weight: 600; margin: 0 0 2px; }
+  .card .desc { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+
+  .tile .label { font-size: 12px; color: var(--ink-2); }
+  .tile .value { font-size: 22px; font-weight: 600; margin-top: 2px; }
+  .tile .note { font-size: 12px; color: var(--muted); margin-top: 2px; }
+  .hero { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 24px; }
+  .hero .value { font-size: 48px; font-weight: 600; line-height: 1.05; letter-spacing: -0.01em; }
+  .hero .label { font-size: 13px; color: var(--ink-2); }
+  .delta { font-size: 13px; color: var(--ink-2); }
+
+  /* Status: immer Symbol + Text, nie nur Farbe */
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--ink-2); }
+  .status::before { content: ""; width: 10px; height: 10px; border-radius: 50%; background: var(--sc, var(--muted)); flex: none; }
+  .status.good { --sc: var(--good); }
+  .status.warning { --sc: var(--warning); }
+  .status.warning::before, .status.serious::before { border-radius: 2px; transform: rotate(45deg); width: 9px; height: 9px; }
+  .status.serious { --sc: var(--serious); }
+  .status.critical { --sc: var(--critical); }
+  .status.critical::before { border-radius: 2px; }
+
+  /* Meter */
+  .meter { height: 10px; border-radius: 999px; background: var(--seq-100); overflow: hidden; margin: 10px 0 6px; }
+  .meter > span { display: block; height: 100%; border-radius: 999px; background: var(--fill, var(--accent)); min-width: 2px; }
+  .meter.thin { height: 6px; margin: 6px 0 4px; }
+
+  /* Diagramme */
+  .chart { position: relative; height: 260px; }
+  .chart.small { height: 200px; }
+  .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; margin: 0 0 8px; font-size: 12px; color: var(--ink-2); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend i { width: 10px; height: 10px; border-radius: 3px; background: var(--c); display: inline-block; }
+  .empty { color: var(--muted); font-size: 13px; padding: 24px 0; text-align: center; }
+
+  /* Segmentierter Balken (Notenverteilung) */
+  .segbar { display: flex; gap: 2px; height: 28px; margin: 6px 0 2px; }
+  .segbar > div { border-radius: 4px; display: flex; align-items: center; padding-left: 6px; font-size: 12px; font-weight: 600; color: #fff; overflow: hidden; white-space: nowrap; min-width: 0; }
+  .segbar > div.dark-text { color: #0b0b0b; }
+  .segrow { margin-bottom: 10px; }
+  .segrow .name { font-size: 12px; color: var(--ink-2); display: flex; justify-content: space-between; }
+
+  /* Heatmap */
+  .heat { display: grid; grid-template-columns: 28px repeat(24, minmax(0, 1fr)); gap: 2px; font-size: 10px; color: var(--muted); }
+  .heat .cell { aspect-ratio: 1; border-radius: 3px; background: var(--surface-2); min-height: 8px; }
+  .heat .rowlabel { display: flex; align-items: center; font-size: 11px; }
+  .heat .hourlabel { text-align: center; }
+
+  /* Tabellen */
+  .table-wrap { overflow-x: auto; margin-top: 4px; }
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th { color: var(--muted); font-weight: 500; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr:last-child td { border-bottom: 0; }
+  details.tbl { margin-top: 8px; }
+  details.tbl summary { cursor: pointer; font-size: 12px; color: var(--muted); }
+  .key { display: inline-block; width: 8px; height: 8px; border-radius: 2px; background: var(--c); margin-right: 6px; }
+  code { font-size: 12px; background: var(--surface-2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+
+  /* Tooltip für Heatmap/Balken */
+  #tip { position: fixed; z-index: 20; pointer-events: none; background: var(--ink); color: var(--surface); font-size: 12px; padding: 6px 8px; border-radius: 6px; max-width: 260px; }
+
+  @media (max-width: 600px) {
+    .hero .value { font-size: 40px; }
+    .brand small { display: none; }
+  }
+</style>
+</head>
+<body>
+<header class="top" id="topbar" hidden>
+  <div class="wrap">
+    <div class="brand">Teach Dashboard <small>Kosten &amp; Analytics</small></div>
+    <div class="seg" role="group" aria-label="Zeitraum" id="range">
+      <button type="button" data-days="7">7 T</button>
+      <button type="button" data-days="30">30 T</button>
+      <button type="button" data-days="90">90 T</button>
+      <button type="button" data-days="365">1 J</button>
+    </div>
+    <button type="button" class="btn" id="refresh">Aktualisieren</button>
+    <button type="button" class="btn" id="logout">Abmelden</button>
+  </div>
+</header>
+
+<main class="wrap">
+  <div id="banners"></div>
+
+  <form class="login" id="login" hidden>
+    <h1>Teach Dashboard</h1>
+    <p>Anmelden mit deinem Teach-Konto. Nur Konten aus <code>ADMIN_USER_IDS</code> sehen Daten.</p>
+    <label for="email">E-Mail</label>
+    <input id="email" type="email" autocomplete="username" required>
+    <label for="password">Passwort</label>
+    <input id="password" type="password" autocomplete="current-password" required>
+    <button class="btn primary" type="submit" id="loginBtn">Anmelden</button>
+    <div class="err" id="loginErr" role="alert"></div>
+    <div class="hint">Ohne Login ansehen: <a href="?demo">Demo mit Beispieldaten</a></div>
+  </form>
+
+  <div id="app" hidden>
+    <p class="meta" id="stamp"></p>
+
+    <section class="block" id="costs">
+      <h2>Kosten</h2>
+      <p class="sub" id="costsSub"></p>
+      <div class="grid two">
+        <div class="card">
+          <div class="hero">
+            <div>
+              <div class="label">Geschätzte API-Kosten im Zeitraum</div>
+              <div class="value" id="heroCost">–</div>
+            </div>
+            <div class="delta" id="heroDelta"></div>
+          </div>
+        </div>
+        <div class="card" id="guardCard">
+          <h3>Google-Kostendeckel</h3>
+          <p class="desc">Harter Stopp in <code>cloudSpendGuard.ts</code>. Läuft seit dem Start mit und wird nie zurückgesetzt.</p>
+          <div id="guardValue" class="tile"></div>
+          <div class="meter"><span id="guardFill"></span></div>
+          <div id="guardStatus"></div>
+        </div>
+      </div>
+      <div class="grid tiles" id="costTiles" style="margin-top:12px"></div>
+      <div class="grid two" style="margin-top:12px">
+        <div class="card">
+          <h3>Kosten pro Tag</h3>
+          <p class="desc">Geschätzt in US-Dollar, nach Preisklasse bzw. Vorgang</p>
+          <div class="legend" id="costLegend"></div>
+          <div class="chart" id="costChartBox"><canvas id="costChart" aria-label="Kosten pro Tag"></canvas></div>
+          <details class="tbl"><summary>Als Tabelle</summary><div class="table-wrap" id="costTable"></div></details>
+        </div>
+        <div class="card">
+          <h3>Vorgelesene Zeichen pro Tag</h3>
+          <p class="desc">Google Cloud TTS nach Stimmklasse</p>
+          <div class="legend" id="charLegend"></div>
+          <div class="chart" id="charChartBox"><canvas id="charChart" aria-label="Zeichen pro Tag"></canvas></div>
+          <details class="tbl"><summary>Als Tabelle</summary><div class="table-wrap" id="charTable"></div></details>
+          <div id="freeTier" style="margin-top:12px"></div>
+        </div>
+      </div>
+      <div class="card" style="margin-top:12px">
+        <h3>Aufschlüsselung nach Funktion</h3>
+        <p class="desc">Alle protokollierten Aufrufe im Zeitraum. Token: Input / davon gecacht / Output.</p>
+        <div class="table-wrap" id="breakdown"></div>
+      </div>
+    </section>
+
+    <section class="block" id="ops">
+      <h2>Betrieb &amp; Missbrauch</h2>
+      <p class="sub">Gast-Aufrufe sollten bei Teach gerade bei 0 liegen. Automatische Alarme gibt es noch nicht, das hier ist der manuelle Blick.</p>
+      <div class="grid tiles" id="opsTiles"></div>
+      <div class="card" style="margin-top:12px">
+        <h3>Rate-Limit-Zähler, letzte 24 Stunden</h3>
+        <p class="desc">Aus <code>rate_limit_counters</code>. Achtung: grade-answer, generate-questions und text-to-speech teilen sich pro Identität einen Zähler, die Zahl ist die Summe. Engstes Limit: grade-answer mit 150 pro Stunde.</p>
+        <div class="table-wrap" id="rateTable"></div>
+      </div>
+    </section>
+
+    <section class="block" id="learning">
+      <h2>Lernen</h2>
+      <p class="sub">Aus <code>review_logs</code>. Ein Lerntag beginnt um 04:00 Uhr, wie in der App.</p>
+      <div class="grid tiles" id="learnTiles"></div>
+      <div class="grid two" style="margin-top:12px">
+        <div class="card">
+          <h3>Bewertungen pro Lerntag</h3>
+          <p class="desc">Nach Lernmodus</p>
+          <div class="legend" id="reviewLegend"></div>
+          <div class="chart" id="reviewChartBox"><canvas id="reviewChart" aria-label="Bewertungen pro Lerntag"></canvas></div>
+          <details class="tbl"><summary>Als Tabelle</summary><div class="table-wrap" id="reviewTable"></div></details>
+        </div>
+        <div class="card">
+          <h3>Ø Deckung im Sprach-Modus</h3>
+          <p class="desc">Anteil getroffener Kontrollpunkte pro Lerntag</p>
+          <div class="chart" id="deckungChartBox"><canvas id="deckungChart" aria-label="Durchschnittliche Deckung"></canvas></div>
+          <details class="tbl"><summary>Als Tabelle</summary><div class="table-wrap" id="deckungTable"></div></details>
+        </div>
+      </div>
+      <div class="grid two" style="margin-top:12px">
+        <div class="card">
+          <h3>Bewertungen nach Note</h3>
+          <p class="desc">Sprechen: Falsch/Teilweise/Richtig entsprechen Nochmal/Schwer/Gut.</p>
+          <div class="legend" id="ratingLegend"></div>
+          <div id="ratingBars"></div>
+        </div>
+        <div class="card">
+          <h3>Wann gelernt wird</h3>
+          <p class="desc">Bewertungen nach Wochentag und Uhrzeit (Ortszeit)</p>
+          <div id="heatmap"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="block" id="library">
+      <h2>Bibliothek &amp; Nutzer</h2>
+      <p class="sub">Aktueller Stand über alle Konten.</p>
+      <div class="grid tiles" id="libTiles"></div>
+      <div class="card" style="margin-top:12px">
+        <h3>Neue Karten pro Tag</h3>
+        <p class="desc">Angelegt in der App, per PDF-Import oder über den Claude-Konnektor</p>
+        <div class="chart small" id="cardsChartBox"><canvas id="cardsChart" aria-label="Neue Karten pro Tag"></canvas></div>
+        <details class="tbl"><summary>Als Tabelle</summary><div class="table-wrap" id="cardsTable"></div></details>
+      </div>
+    </section>
+  </div>
+</main>
+<div id="tip" hidden></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"
+        integrity="sha384-bs/nf9FbdNouRbMiFcrcZfLXYPKiPaGVGplVbv7dLGECccEXDW+S3zjqSKR5ZEaD"
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script src="app.js"></script>
+</body>
+</html>

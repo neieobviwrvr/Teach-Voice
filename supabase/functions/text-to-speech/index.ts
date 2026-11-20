@@ -31,6 +31,8 @@
 
 import { checkRateLimit, resolveIdentity } from "../_shared/rateLimit.ts";
 import { checkAndReserveGoogleCloudSpend } from "../_shared/cloudSpendGuard.ts";
+import { TTS_PRICE_PER_MILLION_CHARS_USD, type TtsPriceClass } from "../_shared/apiPricing.ts";
+import { logApiUsage, type UsageStatus } from "../_shared/usageLog.ts";
 
 const GOOGLE_TTS_URL = "https://texttospeech.googleapis.com/v1/text:synthesize";
 const LANGUAGE_CODE = "de-DE";
@@ -45,22 +47,21 @@ const LANGUAGE_CODE = "de-DE";
 //   - Chirp 3: HD: neueste, sehr natürliche Generation, $30 / 1 Mio. Zeichen
 //     (laut Googles Preisseite, Stand der Änderung). Format
 //     `de-DE-Chirp3-HD-<Name>`, Tempo per speakingRate (0.25-2.0) möglich.
-const WAVENET_PRICE_PER_CHAR_USD = 4 / 1_000_000;
-const CHIRP3_HD_PRICE_PER_CHAR_USD = 30 / 1_000_000;
-const ALLOWED_VOICES: Record<string, number> = {
-  "de-DE-Wavenet-G": WAVENET_PRICE_PER_CHAR_USD,
-  "de-DE-Wavenet-H": WAVENET_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Despina": CHIRP3_HD_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Aoede": CHIRP3_HD_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Kore": CHIRP3_HD_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Leda": CHIRP3_HD_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Zephyr": CHIRP3_HD_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Sulafat": CHIRP3_HD_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Charon": CHIRP3_HD_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Puck": CHIRP3_HD_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Fenrir": CHIRP3_HD_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Schedar": CHIRP3_HD_PRICE_PER_CHAR_USD,
-  "de-DE-Chirp3-HD-Umbriel": CHIRP3_HD_PRICE_PER_CHAR_USD,
+// Die Preise selbst stehen in _shared/apiPricing.ts (auch fürs Dashboard).
+const ALLOWED_VOICES: Record<string, TtsPriceClass> = {
+  "de-DE-Wavenet-G": "wavenet",
+  "de-DE-Wavenet-H": "wavenet",
+  "de-DE-Chirp3-HD-Despina": "chirp3_hd",
+  "de-DE-Chirp3-HD-Aoede": "chirp3_hd",
+  "de-DE-Chirp3-HD-Kore": "chirp3_hd",
+  "de-DE-Chirp3-HD-Leda": "chirp3_hd",
+  "de-DE-Chirp3-HD-Zephyr": "chirp3_hd",
+  "de-DE-Chirp3-HD-Sulafat": "chirp3_hd",
+  "de-DE-Chirp3-HD-Charon": "chirp3_hd",
+  "de-DE-Chirp3-HD-Puck": "chirp3_hd",
+  "de-DE-Chirp3-HD-Fenrir": "chirp3_hd",
+  "de-DE-Chirp3-HD-Schedar": "chirp3_hd",
+  "de-DE-Chirp3-HD-Umbriel": "chirp3_hd",
 };
 // Ältere App-Versionen schicken keine Stimme mit -> bisherige Stimme.
 const DEFAULT_VOICE = "de-DE-Wavenet-G";
@@ -119,10 +120,11 @@ Deno.serve(async (req: Request) => {
     const voice = typeof body.voice === "string" ? body.voice : DEFAULT_VOICE;
     // Object.hasOwn statt Index-Zugriff: sonst würden Namen wie "toString"
     // geerbte Eigenschaften treffen.
-    const pricePerChar = Object.hasOwn(ALLOWED_VOICES, voice) ? ALLOWED_VOICES[voice] : undefined;
-    if (pricePerChar === undefined) {
+    const priceClass = Object.hasOwn(ALLOWED_VOICES, voice) ? ALLOWED_VOICES[voice] : undefined;
+    if (priceClass === undefined) {
       return jsonResponse({ error: `Unbekannte Stimme "${voice}".` }, 400);
     }
+    const pricePerChar = TTS_PRICE_PER_MILLION_CHARS_USD[priceClass] / 1_000_000;
     const speakingRate = body.speakingRate ?? 1;
     if (typeof speakingRate !== "number" || !Number.isFinite(speakingRate) ||
         speakingRate < MIN_SPEAKING_RATE || speakingRate > MAX_SPEAKING_RATE) {
@@ -134,12 +136,37 @@ Deno.serve(async (req: Request) => {
     // überschreiten. Läuft VOR dem eigentlichen (bezahlten) Google-Call und
     // rechnet mit dem Preis der gewählten Stimmklasse.
     const estimatedCost = body.text.length * pricePerChar;
+    const text = body.text.trim();
+    // Kostenprotokoll fürs Dashboard (_shared/usageLog.ts) -- blockiert nie.
+    const logUsage = (status: UsageStatus, startedAt?: number) =>
+      logApiUsage({
+        functionName: "text-to-speech",
+        operation: "tts",
+        provider: "google_tts",
+        model: voice,
+        priceClass,
+        status,
+        characters: text.length,
+        estimatedCostUsd: status === "ok" ? text.length * pricePerChar : 0,
+        identity,
+        durationMs: startedAt !== undefined ? Date.now() - startedAt : undefined,
+      });
+
     const spendAllowed = await checkAndReserveGoogleCloudSpend(estimatedCost);
     if (!spendAllowed) {
+      logUsage("blocked");
       return jsonResponse({ error: "Cloud-Sprachausgabe momentan pausiert (internes Budget-Limit erreicht)." }, 503);
     }
 
-    const audioContent = await synthesize(body.text.trim(), voice, speakingRate);
+    const startedAt = Date.now();
+    let audioContent: string;
+    try {
+      audioContent = await synthesize(text, voice, speakingRate);
+    } catch (err) {
+      logUsage("error", startedAt);
+      throw err;
+    }
+    logUsage("ok", startedAt);
     const response: TTSResponse = { audioContent };
     return jsonResponse(response, 200);
   } catch (err) {
