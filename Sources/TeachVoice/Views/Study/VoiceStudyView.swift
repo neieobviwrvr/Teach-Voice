@@ -12,7 +12,9 @@ import SwiftUI
 ///   fertig ist, tippt "Fertig".
 /// - Wer noch länger braucht, hält den Kreis unten gedrückt
 ///   (`HoldToThinkButton`): solange gehalten wird, beendet Stille die
-///   Aufnahme nicht; Loslassen wertet sofort aus.
+///   Aufnahme nicht; Loslassen wertet sofort aus. Den Kreis an einen
+///   Bildschirmrand ziehen und dort loslassen überspringt die Karte (zählt
+///   als falsch) und zeigt die Rückseite mit der Lösung, bis "Weiter".
 /// - Nach jeder Antwort, die nicht als richtig gilt, liest die App eine
 ///   KURZE richtige Antwort vor (`GradingResult.kurzloesung`, 1-2 Sätze).
 /// - Wird nichts erkannt oder ist die KI nicht erreichbar, geht die Karte
@@ -60,6 +62,9 @@ struct VoiceStudyView: View {
     @State private var pendingUrteil: GradingResult.Urteil?
     /// "Überspringen" getippt: zählt als falsch, sofort weiter.
     @State private var skipRequested = false
+    /// Kreis an den Bildschirmrand gezogen: Karte ist umgedreht und zeigt nur
+    /// die Lösung mit "Weiter" -- zählt fest als falsch, keine Bewertungswahl.
+    @State private var skippedWithSolution = false
 
     /// `vorbereiten`: Bevor die erste Frage kommt, ist alles bereit --
     /// Mikrofonzugriff geklärt, Spracherkennung geladen, Stimme für die
@@ -134,9 +139,17 @@ struct VoiceStudyView: View {
                         isHoldingToThink = true
                         recorder.beginHold()
                     },
-                    onHoldEnd: { submit in
+                    onHoldEnd: { release in
                         isHoldingToThink = false
-                        recorder.endHold(submit: submit)
+                        switch release {
+                        case .submit:
+                            recorder.endHold(submit: true)
+                        case .tap:
+                            recorder.endHold(submit: false)
+                        case .skipWithSolution:
+                            recorder.endHold(submit: false)
+                            skipShowingSolution()
+                        }
                     }
                 )
                 .padding(.bottom, 8)
@@ -259,22 +272,39 @@ struct VoiceStudyView: View {
     }
 
     /// Rückseite: Musterantwort und Selbstbewertung. Wird nicht vorgelesen.
+    /// Nach dem Wegziehen des Kreises (`skippedWithSolution`) steht dort statt
+    /// der Bewertung nur "Weiter" -- die Karte zählt dann fest als falsch.
     private func cardBack(_ card: Flashcard) -> some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Antwort").font(.caption.bold()).foregroundStyle(.secondary)
             Text(flashcardMarkdown: card.answer)
                 .frame(maxWidth: .infinity, alignment: .leading)
             Divider()
-            Text("Wusstest du es?")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity)
-            HStack(spacing: 8) {
-                assessmentButton(.falsch, vorschlag: nil, card: card)
-                assessmentButton(.teilweise, vorschlag: nil, card: card)
-                assessmentButton(.richtig, vorschlag: nil, card: card)
+            if skippedWithSolution {
+                Label("Übersprungen – zählt als falsch", systemImage: "forward.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                Button {
+                    assess(.falsch, haptic: false)
+                } label: {
+                    Text("Weiter").frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(pendingUrteil != nil)
+            } else {
+                Text("Wusstest du es?")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity)
+                HStack(spacing: 8) {
+                    assessmentButton(.falsch, vorschlag: nil, card: card)
+                    assessmentButton(.teilweise, vorschlag: nil, card: card)
+                    assessmentButton(.richtig, vorschlag: nil, card: card)
+                }
+                .disabled(pendingUrteil != nil)
             }
-            .disabled(pendingUrteil != nil)
         }
         .padding()
         .frame(maxWidth: .infinity)
@@ -292,6 +322,10 @@ struct VoiceStudyView: View {
                 if isHoldingToThink {
                     Label("Denk in Ruhe nach – lass los, wenn du fertig bist", systemImage: "brain.head.profile")
                         .foregroundStyle(.orange)
+                        .multilineTextAlignment(.center)
+                    Text("Weißt du es nicht? Zieh den Kreis an einen Bildschirmrand, bis er rot wird, und lass los – dann siehst du die Lösung, die Karte zählt als falsch.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 } else {
                     Label("Ich höre zu – lass dir Zeit", systemImage: "mic.fill")
@@ -459,6 +493,7 @@ struct VoiceStudyView: View {
             isFlipped = false
             pendingUrteil = nil
             skipRequested = false
+            skippedWithSolution = false
 
             // `nil`: abgebrochen (Ansicht verlassen o.ä.) -- dann NICHTS speichern.
             guard let outcome = await ask(card) else { return }
@@ -669,11 +704,13 @@ struct VoiceStudyView: View {
         }
     }
 
-    private func assess(_ urteil: GradingResult.Urteil) {
+    /// `haptic: false` bei "Weiter" nach dem Wegziehen -- das "falsch"-Signal
+    /// kam dort schon beim Loslassen.
+    private func assess(_ urteil: GradingResult.Urteil, haptic: Bool = true) {
         // Beendet auch das noch laufende Vorlesen der Frage, wenn auf der
         // Rückseite bewertet wird -- dann kommt direkt die nächste Frage.
         speech.stop()
-        HapticFeedback.play(for: urteil)
+        if haptic { HapticFeedback.play(for: urteil) }
         if let continuation = assessmentContinuation {
             assessmentContinuation = nil
             continuation.resume(returning: urteil)
@@ -701,6 +738,19 @@ struct VoiceStudyView: View {
         skipRequested = true
         HapticFeedback.play(for: .falsch)
         speech.stop()
+        recorder.requestManualStop()
+    }
+
+    /// Kreis an den Bildschirmrand gezogen: Karte überspringen, aber dieses
+    /// Mal die Rückseite mit der Lösung zeigen (Simons Wunsch 2026-11-20).
+    /// Zählt fest als falsch; weiter geht es erst mit "Weiter". Die Aufnahme
+    /// wird verworfen -- keine Erkennung, keine KI. Läuft danach über denselben
+    /// Weg wie das Umdrehen (`interruptedOutcome` wartet auf "Weiter").
+    private func skipShowingSolution() {
+        guard canInterrupt else { return }
+        skippedWithSolution = true
+        HapticFeedback.play(for: .falsch)
+        withAnimation(.easeInOut(duration: 0.5)) { isFlipped = true }
         recorder.requestManualStop()
     }
 
