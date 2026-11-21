@@ -20,6 +20,10 @@ Beide Modi enden mit einem **Statistik-Screen** (`Views/Study/SessionSummaryView
 
 Eigener Tab **„Podcasts“** in der Tab-Leiste unten (neben „Lernen“): Audiodateien – z. B. die NotebookLM-Podcasts zu den Folien – über „+“ aus der Dateien-App importieren und anhören. Alles bleibt **nur auf diesem iPhone** (kein Supabase, nicht im iCloud-Backup). Hat eine Datei eine hohe Datenrate, wird sie beim Import auf Sprachqualität heruntergerechnet (AAC mono 64 kbit/s, ca. 14 MB pro 30 Minuten), sonst unverändert übernommen. Der Player merkt sich die Stelle pro Podcast, läuft bei gesperrtem Bildschirm weiter (Steuerung auf dem Sperrbildschirm), springt 15 s zurück / 30 s vor und spielt mit 1×–2×. Podcasts lassen sich umbenennen, einem Lern-Ordner zuordnen und löschen; optional löschen sich zu Ende gehörte Podcasts selbst. Startet eine Lern-Session, pausiert der Podcast automatisch – Lern-Audio und Podcast laufen nie gleichzeitig.
 
+## Aus anderen Apps teilen
+
+Podcasts und Zusammenfassungen lassen sich direkt aus **WhatsApp, Mail, Safari oder der Dateien-App** übernehmen: Datei öffnen → Teilen → **Teach (Voice)** (falls nicht sichtbar: in der App-Reihe ganz rechts „Mehr“). Audio landet automatisch bei den Podcasts, Dokumente und Bilder bei den Zusammenfassungen; Teach wechselt in den passenden Tab und meldet, was übernommen wurde. Die Zwischenkopie, die iOS dabei anlegt, wird gleich wieder gelöscht, damit nichts doppelt Speicher belegt.
+
 ## Zusammenfassungen
 
 Dritter Tab **„Zusammenfassungen“**: fertige Zusammenfassungen als Dateien – PDF, Word, PowerPoint, Pages/Keynote, Text/Markdown oder Bilder – über „+“ aus der Dateien-App übernehmen und direkt in der App ansehen (Vorschau mit Teilen, Suchen im PDF und Markieren). Alles bleibt **nur auf diesem iPhone** (kein Supabase); anders als die Podcasts sind die Zusammenfassungen im iCloud-Backup enthalten, weil sie klein sind und oft die eigene Arbeit. Suche über den Titel, umbenennen, einem Lern-Ordner zuordnen, löschen.

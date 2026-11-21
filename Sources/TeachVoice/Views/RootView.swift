@@ -53,14 +53,49 @@ struct RootView: View {
 struct MainTabView: View {
     let mode: LibraryMode
 
+    @EnvironmentObject private var router: AppRouter
+
     var body: some View {
-        TabView {
+        TabView(selection: $router.selectedTab) {
             FolderListView(mode: mode)
                 .tabItem { Label("Lernen", systemImage: "rectangle.stack") }
+                .tag(AppRouter.Tab.lernen)
             PodcastListView()
                 .tabItem { Label("Podcasts", systemImage: "headphones") }
+                .tag(AppRouter.Tab.podcasts)
             SummaryListView()
                 .tabItem { Label("Zusammenfassungen", systemImage: "doc.text") }
+                .tag(AppRouter.Tab.zusammenfassungen)
         }
+        // Datei aus dem Teilen-Menü einer anderen App wird gerade übernommen.
+        .overlay(alignment: .top) {
+            if let fileName = router.importingFileName {
+                HStack(spacing: 10) {
+                    ProgressView()
+                    Text("„\(fileName)“ wird übernommen…")
+                        .font(.footnote)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.regularMaterial, in: Capsule())
+                .padding(.top, 4)
+                .transition(.move(edge: .top).combined(with: .opacity))
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: router.importingFileName)
+        .alert(
+            router.importResult?.title ?? "",
+            isPresented: hasImportResult,
+            presenting: router.importResult
+        ) { _ in
+            Button("OK", role: .cancel) { router.importResult = nil }
+        } message: { result in
+            Text(result.message)
+        }
+    }
+
+    private var hasImportResult: Binding<Bool> {
+        Binding(get: { router.importResult != nil }, set: { if !$0 { router.importResult = nil } })
     }
 }

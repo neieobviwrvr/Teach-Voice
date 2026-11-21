@@ -28,7 +28,9 @@ struct TeachVoiceApp: App {
     @StateObject private var podcasts: PodcastStore
     @StateObject private var podcastPlayer: PodcastPlayer
     // Zusammenfassungen (Tab "Zusammenfassungen"): ebenfalls nur auf dem Gerät.
-    @StateObject private var summaries = SummaryStore()
+    @StateObject private var summaries: SummaryStore
+    // Tab-Auswahl + Dateien aus dem Teilen-Menü anderer Apps (WhatsApp …).
+    @StateObject private var router: AppRouter
 
     init() {
         let auth = AuthManager()
@@ -41,6 +43,9 @@ struct TeachVoiceApp: App {
         let podcasts = PodcastStore()
         _podcasts = StateObject(wrappedValue: podcasts)
         _podcastPlayer = StateObject(wrappedValue: PodcastPlayer(store: podcasts))
+        let summaries = SummaryStore()
+        _summaries = StateObject(wrappedValue: summaries)
+        _router = StateObject(wrappedValue: AppRouter(podcasts: podcasts, summaries: summaries))
     }
 
     var body: some Scene {
@@ -53,14 +58,22 @@ struct TeachVoiceApp: App {
                 .environmentObject(podcasts)
                 .environmentObject(podcastPlayer)
                 .environmentObject(summaries)
+                .environmentObject(router)
                 // Fängt den Rücksprung aus der Supabase-Bestätigungs-/Magic-
                 // Link-Mail ab (Custom-URL-Schema "teachvoice://", siehe
                 // project.yml CFBundleURLTypes + AuthManager.handleAuthRedirect)
                 // -- ohne das landete der Mail-Link bisher in einer
                 // Browser-Sackgasse (localhost:3000), ohne dass die App je
                 // etwas vom bestätigten Login mitbekam.
+                // Zweiter Weg hierher: eine Datei, die in einer anderen App
+                // über "Teilen -> Teach" geöffnet wurde (CFBundleDocumentTypes
+                // in project.yml) -- kommt als Datei-URL.
                 .onOpenURL { url in
-                    Task { await auth.handleAuthRedirect(url: url) }
+                    if url.isFileURL {
+                        router.handleIncomingFile(url)
+                    } else {
+                        Task { await auth.handleAuthRedirect(url: url) }
+                    }
                 }
         }
     }
